@@ -65,7 +65,7 @@ export default function AdminDashboard({ user }: { user: User }) {
       await api.post('/auth/logout');
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/auth/me'] });
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
     },
   });
 
@@ -86,7 +86,7 @@ export default function AdminDashboard({ user }: { user: User }) {
 
   const updateBranchMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
-      const res = await api.patch(`/branches/${id}`, data);
+      const res = await api.put(`/branches/${id}`, data);
       return res.data;
     },
     onSuccess: () => {
@@ -120,7 +120,7 @@ export default function AdminDashboard({ user }: { user: User }) {
       return res.data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/auth/me'] });
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
       alert(data.message || '지점 관리자로 전환되었습니다.');
       // 페이지 새로고침하여 지점 관리자 대시보드로 이동
       window.location.reload();
@@ -761,42 +761,48 @@ export default function AdminDashboard({ user }: { user: User }) {
       {/* 시험 직접 생성 간단 모달 */}
       {showExamModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto">
-          <Card className="w-full max-w-md mx-4 my-8">
+          <Card className="w-full max-w-2xl mx-4 my-8">
             <CardHeader className="bg-gradient-to-r from-purple-50 to-pink-50">
               <CardTitle className="flex items-center gap-2">
                 <Plus className="w-5 h-5 text-purple-600" />
-                새 시험 추가
+                시험 직접 생성 (간단 버전)
               </CardTitle>
             </CardHeader>
             <CardContent className="p-6">
               <form onSubmit={handleExamSubmit} className="space-y-4">
-                <div>
-                  <label className="text-sm font-semibold text-gray-700">시험지 명 *</label>
-                  <Input name="title" required className="mt-1" placeholder="시험지 명을 입력하세요" />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-semibold text-gray-700">시험명 *</label>
+                    <Input name="title" required className="mt-1" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-gray-700">과목</label>
+                    <Input name="subject" className="mt-1" placeholder="예: 수학" />
+                  </div>
                 </div>
-                <input type="hidden" name="subject" value="국어" />
-                <input type="hidden" name="totalQuestions" value="20" />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-semibold text-gray-700">학년</label>
+                    <Input name="grade" className="mt-1" placeholder="예: 중3" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-gray-700">총 문제 수 *</label>
+                    <Input name="totalQuestions" type="number" required defaultValue="20" className="mt-1" />
+                  </div>
+                </div>
                 <div>
-                  <label className="text-sm font-semibold text-gray-700">학년 *</label>
-                  <select
-                    name="grade"
-                    required
-                    className="mt-1 flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
-                  >
-                    <option value="">학년 선택</option>
-                    <option value="초1">초1</option>
-                    <option value="초2">초2</option>
-                    <option value="초3">초3</option>
-                    <option value="초4">초4</option>
-                    <option value="초5">초5</option>
-                    <option value="초6">초6</option>
-                    <option value="중1">중1</option>
-                    <option value="중2">중2</option>
-                    <option value="중3">중3</option>
-                    <option value="고1">고1</option>
-                    <option value="고2">고2</option>
-                    <option value="고3">고3</option>
-                  </select>
+                  <label className="text-sm font-semibold text-gray-700">설명</label>
+                  <textarea
+                    name="description"
+                    className="mt-1 w-full rounded-md border border-gray-200 p-2 text-sm"
+                    rows={2}
+                  />
+                </div>
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                  <p className="text-xs text-yellow-800">
+                    💡 간단 버전: 모든 문제는 2점, 난이도 '중', 카테고리 '미분류'로 자동 설정됩니다.
+                    정답은 문제 번호와 동일하게 설정됩니다. Excel 업로드를 통해 상세한 시험지를 등록하세요.
+                  </p>
                 </div>
                 <div className="flex gap-2 pt-4">
                   <Button type="submit" className="flex-1 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700">
@@ -864,7 +870,7 @@ export default function AdminDashboard({ user }: { user: User }) {
                     grade: formData.get('grade'),
                     description: formData.get('description'),
                     totalQuestions: questionsData.length,
-                    totalScore: questionsData.reduce((sum: number, q: { points: number }) => sum + q.points, 0),
+                    totalScore: questionsData.reduce((sum, q) => sum + q.points, 0),
                     questionsData,
                     overallReview: formData.get('overallReview'),
                   };

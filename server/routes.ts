@@ -197,6 +197,41 @@ export async function registerRoutes(
     }
   });
 
+  // PUT route for branch update (GitHub compatibility)
+  app.put("/api/branches/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { name, address, phone, managerName } = req.body;
+      const [branch] = await db.update(branches)
+        .set({ name, address, phone, managerName, updatedAt: new Date() })
+        .where(eq(branches.id, id))
+        .returning();
+      res.json({ success: true, data: branch, message: "지점이 수정되었습니다." });
+    } catch (error) {
+      console.error("Update branch error:", error);
+      res.status(500).json({ message: "지점 수정 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Reorder branches
+  app.post("/api/branches/reorder", requireAdmin, async (req, res) => {
+    try {
+      const { branchIds } = req.body;
+      if (!Array.isArray(branchIds) || branchIds.length === 0) {
+        return res.status(400).json({ message: "유효한 지점 순서를 입력해주세요." });
+      }
+      await Promise.all(
+        branchIds.map((id, index) =>
+          db.update(branches).set({ displayOrder: index }).where(eq(branches.id, id))
+        )
+      );
+      res.json({ success: true, message: "지점 순서가 변경되었습니다." });
+    } catch (error) {
+      console.error("Reorder branches error:", error);
+      res.status(500).json({ message: "지점 순서 변경 중 오류가 발생했습니다." });
+    }
+  });
+
   // ============ USER MANAGEMENT ROUTES ============
 
   // Get all users (admin only)
@@ -986,20 +1021,57 @@ ${wrongAnswers.map(q => `- ${q.questionNumber}번: 정답 ${q.correctAnswer}번,
 
   // ============ DASHBOARD STATS ============
 
-  // Admin dashboard stats
+  // Admin dashboard stats (GitHub exact format)
   app.get("/api/admin/stats", requireAdmin, async (req, res) => {
     try {
       const [branchCount] = await db.select({ count: sql<number>`count(*)` }).from(branches);
       const [studentCount] = await db.select({ count: sql<number>`count(*)` }).from(students);
       const [examCount] = await db.select({ count: sql<number>`count(*)` }).from(exams);
-      const [attemptCount] = await db.select({ count: sql<number>`count(*)` }).from(examAttempts);
+      
+      const [avgScore] = await db
+        .select({ avg: sql<number>`avg(${examAttempts.score})` })
+        .from(examAttempts)
+        .where(sql`${examAttempts.submittedAt} IS NOT NULL`);
 
-      res.json({ data: {
-        branches: Number(branchCount.count),
-        students: Number(studentCount.count),
-        exams: Number(examCount.count),
-        attempts: Number(attemptCount.count),
-      }});
+      const branchList = await db.select().from(branches).orderBy(branches.displayOrder);
+      const branchStats = [];
+      
+      for (const branch of branchList) {
+        const [branchStudentCount] = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(students)
+          .where(eq(students.branchId, branch.id));
+          
+        const [branchExamCount] = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(examAttempts)
+          .innerJoin(students, eq(examAttempts.studentId, students.id))
+          .where(eq(students.branchId, branch.id));
+          
+        const [branchAvgScore] = await db
+          .select({ avg: sql<number>`avg(${examAttempts.score})` })
+          .from(examAttempts)
+          .innerJoin(students, eq(examAttempts.studentId, students.id))
+          .where(and(eq(students.branchId, branch.id), sql`${examAttempts.submittedAt} IS NOT NULL`));
+          
+        branchStats.push({
+          branchName: branch.name,
+          studentCount: Number(branchStudentCount.count) || 0,
+          examCount: Number(branchExamCount.count) || 0,
+          averageScore: branchAvgScore.avg ? Math.round(Number(branchAvgScore.avg)) : 0,
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          totalStudents: Number(studentCount.count) || 0,
+          totalBranches: Number(branchCount.count) || 0,
+          totalExams: Number(examCount.count) || 0,
+          averageScore: avgScore.avg ? Math.round(Number(avgScore.avg)) : 0,
+          branchStats,
+        },
+      });
     } catch (error) {
       console.error("Get admin stats error:", error);
       res.status(500).json({ message: "통계를 불러오는 중 오류가 발생했습니다." });

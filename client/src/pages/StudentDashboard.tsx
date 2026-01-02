@@ -670,7 +670,7 @@ export default function StudentDashboard({ user }: { user: User }) {
       await api.post('/auth/logout');
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/auth/me'] });
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
     },
   });
 
