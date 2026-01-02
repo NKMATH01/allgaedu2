@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { GraduationCap, LogIn, Loader2 } from "lucide-react";
@@ -93,18 +92,18 @@ export default function LoginPage() {
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-semibold">계정 유형 (선택사항)</Label>
-              <Select value={userType} onValueChange={setUserType}>
-                <SelectTrigger className="h-11" data-testid="select-usertype">
-                  <SelectValue placeholder="자동 감지" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">자동 감지</SelectItem>
-                  <SelectItem value="admin">관리자</SelectItem>
-                  <SelectItem value="branch">지점 관리자</SelectItem>
-                  <SelectItem value="student">학생</SelectItem>
-                  <SelectItem value="parent">학부모</SelectItem>
-                </SelectContent>
-              </Select>
+              <select
+                className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                value={userType}
+                onChange={(e) => setUserType(e.target.value)}
+                data-testid="select-usertype"
+              >
+                <option value="">자동 감지</option>
+                <option value="admin">관리자</option>
+                <option value="branch">지점 관리자</option>
+                <option value="student">학생</option>
+                <option value="parent">학부모</option>
+              </select>
             </div>
             <Button
               type="submit"
