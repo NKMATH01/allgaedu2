@@ -439,15 +439,19 @@ export async function registerRoutes(
       console.log("Total rows in Excel:", rawData.length);
       console.log("First 5 rows:", rawData.slice(0, 5));
       
-      // Find header row (row containing '문항번호' or '번호' or similar)
+      // Find header row - must contain BOTH "정답" AND "배점" (or similar scoring headers)
       let headerRowIndex = -1;
-      const headerKeywords = ["문항번호", "번호", "문항", "정답", "배점"];
       
       for (let i = 0; i < Math.min(rawData.length, 20); i++) {
         const row = rawData[i];
         if (Array.isArray(row)) {
           const rowStr = row.map(c => String(c || "").trim()).join(" ");
-          if (headerKeywords.some(kw => rowStr.includes(kw))) {
+          // Must have both answer column and score column to be the header row
+          const hasAnswer = rowStr.includes("정답") || rowStr.includes("답");
+          const hasScore = rowStr.includes("배점") || rowStr.includes("점수");
+          const hasNumber = rowStr.includes("번호") || rowStr.includes("문항");
+          
+          if (hasAnswer && hasScore && hasNumber) {
             headerRowIndex = i;
             console.log("Found header row at index:", i, "Row:", row);
             break;
@@ -478,11 +482,11 @@ export async function registerRoutes(
         return -1;
       };
       
-      const questionNumIdx = getColIdx(["문항번호", "번호", "문항", "No", "no"]);
-      const answerIdx = getColIdx(["정답", "답", "answer", "Answer"]);
-      const scoreIdx = getColIdx(["배점", "점수", "score", "Score"]);
-      const topicIdx = getColIdx(["단원", "영역", "대단원", "topic", "유형"]);
-      const conceptIdx = getColIdx(["개념", "소단원", "concept", "내용", "문제유형"]);
+      const questionNumIdx = getColIdx(["문항번호", "번호", "문항", "No", "no", "문제번호"]);
+      const answerIdx = getColIdx(["정답", "답", "answer", "Answer", "정답번호"]);
+      const scoreIdx = getColIdx(["배점", "점수", "score", "Score", "만점"]);
+      const topicIdx = getColIdx(["단원", "영역", "대단원", "topic", "유형", "출제영역"]);
+      const conceptIdx = getColIdx(["개념", "소단원", "concept", "내용", "문제유형", "유형분석", "소분류"]);
       const difficultyIdx = getColIdx(["난이도", "difficulty", "수준"]);
       
       console.log("Column indices:", { questionNumIdx, answerIdx, scoreIdx, topicIdx, conceptIdx, difficultyIdx });
@@ -525,8 +529,17 @@ export async function registerRoutes(
       const totalQuestions = questionsData.length;
       const totalScore = questionsData.reduce((sum, q) => sum + q.score, 0);
 
+      // Fix filename encoding (multer sometimes garbles Korean filenames)
+      let fileName = file.originalname;
+      try {
+        fileName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+      } catch (e) {
+        // fallback to original
+      }
+      fileName = fileName.replace(/\.xlsx$/i, '').replace(/\.xls$/i, '');
+
       const [exam] = await db.insert(exams).values({
-        title: title || file.originalname.replace('.xlsx', ''),
+        title: title || fileName,
         subject: subject || "국어",
         grade: grade || "",
         description: description || "",
