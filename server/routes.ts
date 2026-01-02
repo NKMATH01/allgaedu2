@@ -1083,7 +1083,7 @@ export async function registerRoutes(
         }
       }
       
-      // Get attempts for each student
+      // Get attempts for each student (GitHub exact format - flattened structure)
       const result = await Promise.all(studentsList.map(async (row) => {
         const [attempt] = await db.select().from(examAttempts)
           .where(and(
@@ -1098,8 +1098,24 @@ export async function registerRoutes(
           report = r || null;
         }
         
+        // Flatten structure for frontend compatibility (GitHub exact format)
         return {
-          ...row.student,
+          studentId: row.student.id,
+          studentName: row.user.name,
+          phone: row.user.phone,
+          school: row.student.school,
+          schoolGrade: row.student.grade,
+          hasAttempt: !!attempt,
+          attemptId: attempt?.id || null,
+          score: attempt?.score || null,
+          maxScore: exam.totalScore,
+          grade: attempt?.grade || null,  // exam grade rank (1-9등급)
+          isSubmitted: attempt?.isSubmitted || false,
+          submittedAt: attempt?.submittedAt || null,
+          answers: attempt?.answers || null,
+          hasReport: !!report,
+          reportId: report?.id || null,
+          // Also include nested data for compatibility
           user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
           attempt,
           report,
