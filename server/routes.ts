@@ -325,17 +325,19 @@ export async function registerRoutes(
     }
   });
 
-  // ============ CLASS ROUTES ============
+  // ============ CLASS ROUTES (GitHub exact format) ============
 
   // Get classes for branch
   app.get("/api/classes", requireBranchManager, async (req, res) => {
     try {
       const branchId = req.session.user?.branchId;
-      const query = branchId 
-        ? db.select().from(classes).where(eq(classes.branchId, branchId))
-        : db.select().from(classes);
-      const allClasses = await query.orderBy(classes.name);
-      res.json(allClasses);
+      if (!branchId) {
+        return res.status(400).json({ message: "지점 정보가 없습니다." });
+      }
+      const classList = await db.select().from(classes)
+        .where(eq(classes.branchId, branchId))
+        .orderBy(classes.createdAt);
+      res.json({ success: true, data: classList });
     } catch (error) {
       console.error("Get classes error:", error);
       res.status(500).json({ message: "반 목록을 불러오는 중 오류가 발생했습니다." });
@@ -345,46 +347,254 @@ export async function registerRoutes(
   // Create class
   app.post("/api/classes", requireBranchManager, async (req, res) => {
     try {
-      const { name, branchId, grade, description } = req.body;
+      const branchId = req.session.user?.branchId;
+      const { name, grade, description, studentIds } = req.body;
+      
+      if (!name) {
+        return res.status(400).json({ message: "반 이름을 입력해주세요." });
+      }
+      
       const [newClass] = await db.insert(classes).values({
         name,
-        branchId: branchId || req.session.user?.branchId,
+        branchId: branchId!,
         grade,
         description,
       }).returning();
-      res.json(newClass);
+      
+      // If studentIds provided, assign students to class
+      if (studentIds && Array.isArray(studentIds) && studentIds.length > 0) {
+        for (const studentId of studentIds) {
+          await db.insert(studentClasses).values({
+            studentId,
+            classId: newClass.id,
+          }).onConflictDoNothing();
+        }
+      }
+      
+      res.status(201).json({ success: true, data: newClass, message: "반이 생성되었습니다." });
     } catch (error) {
       console.error("Create class error:", error);
       res.status(500).json({ message: "반 생성 중 오류가 발생했습니다." });
     }
   });
 
-  // ============ STUDENT ROUTES ============
+  // Update class
+  app.put("/api/classes/:id", requireBranchManager, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const branchId = req.session.user?.branchId;
+      const { name, grade, description, studentIds } = req.body;
+      
+      const [updatedClass] = await db.update(classes)
+        .set({ name, grade, description })
+        .where(and(eq(classes.id, id), eq(classes.branchId, branchId!)))
+        .returning();
+      
+      if (!updatedClass) {
+        return res.status(404).json({ message: "반을 찾을 수 없습니다." });
+      }
+      
+      // Update student assignments if provided
+      if (studentIds && Array.isArray(studentIds)) {
+        // Remove existing assignments
+        await db.delete(studentClasses).where(eq(studentClasses.classId, id));
+        // Add new assignments
+        for (const studentId of studentIds) {
+          await db.insert(studentClasses).values({
+            studentId,
+            classId: id,
+          }).onConflictDoNothing();
+        }
+      }
+      
+      res.json({ success: true, data: updatedClass, message: "반이 수정되었습니다." });
+    } catch (error) {
+      console.error("Update class error:", error);
+      res.status(500).json({ message: "반 수정 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Delete class
+  app.delete("/api/classes/:id", requireBranchManager, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const branchId = req.session.user?.branchId;
+      
+      await db.delete(studentClasses).where(eq(studentClasses.classId, id));
+      await db.delete(classes).where(and(eq(classes.id, id), eq(classes.branchId, branchId!)));
+      
+      res.json({ success: true, message: "반이 삭제되었습니다." });
+    } catch (error) {
+      console.error("Delete class error:", error);
+      res.status(500).json({ message: "반 삭제 중 오류가 발생했습니다." });
+    }
+  });
+
+  // ============ STUDENT ROUTES (GitHub exact format) ============
 
   // Get students for branch
   app.get("/api/students", requireBranchManager, async (req, res) => {
     try {
       const branchId = req.session.user?.branchId;
+      if (!branchId) {
+        return res.status(400).json({ message: "지점 정보가 없습니다." });
+      }
+      
       const studentList = await db.select({
         student: students,
-        user: {
-          id: users.id,
-          username: users.username,
-          name: users.name,
-          email: users.email,
-          phone: users.phone,
-          isActive: users.isActive,
-        },
+        user: users,
       })
       .from(students)
       .innerJoin(users, eq(students.userId, users.id))
-      .where(branchId ? eq(students.branchId, branchId) : sql`1=1`)
-      .orderBy(users.name);
+      .where(eq(students.branchId, branchId))
+      .orderBy(students.enrollmentDate);
       
-      res.json(studentList.map(s => ({ ...s.student, user: s.user })));
+      const result = studentList.map(s => ({
+        ...s.student,
+        user: {
+          id: s.user.id,
+          username: s.user.username,
+          name: s.user.name,
+          phone: s.user.phone,
+          email: s.user.email,
+          isActive: s.user.isActive,
+        },
+      }));
+      
+      res.json({ success: true, data: result });
     } catch (error) {
       console.error("Get students error:", error);
       res.status(500).json({ message: "학생 목록을 불러오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Create student (GitHub exact: phone as username, last 4 digits as password)
+  app.post("/api/students", requireBranchManager, async (req, res) => {
+    try {
+      const branchId = req.session.user?.branchId;
+      const { name, phone, school, grade, parentPhone } = req.body;
+      
+      if (!name || !phone) {
+        return res.status(400).json({ message: "필수 정보를 모두 입력해주세요." });
+      }
+      
+      if (phone.length < 4) {
+        return res.status(400).json({ message: "연락처는 최소 4자리 이상이어야 합니다." });
+      }
+      
+      // Use phone as username
+      const username = phone;
+      
+      // Check if username exists
+      const [existingUser] = await db.select().from(users)
+        .where(eq(users.username, username)).limit(1);
+      
+      if (existingUser) {
+        return res.status(400).json({ message: "이미 사용 중인 연락처입니다." });
+      }
+      
+      // Generate password from last 4 digits of phone
+      const password = phone.slice(-4);
+      const passwordHash = await hashPassword(password);
+      
+      // Create user
+      const [user] = await db.insert(users).values({
+        username,
+        passwordHash,
+        role: "student",
+        name,
+        phone,
+        branchId,
+      }).returning();
+      
+      // Create student
+      const [student] = await db.insert(students).values({
+        userId: user.id,
+        branchId: branchId!,
+        school,
+        grade,
+        parentPhone,
+      }).returning();
+      
+      res.status(201).json({
+        success: true,
+        data: { ...student, user },
+        message: "학생이 등록되었습니다. (초기 비밀번호: 연락처 끝 4자리)",
+      });
+    } catch (error) {
+      console.error("Create student error:", error);
+      res.status(500).json({ message: "학생 등록 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Update student (PUT method for GitHub compatibility)
+  app.put("/api/students/:id", requireBranchManager, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const branchId = req.session.user?.branchId;
+      const { name, phone, school, grade, parentPhone, password } = req.body;
+      
+      // Get student
+      const [student] = await db.select().from(students)
+        .where(and(eq(students.id, id), eq(students.branchId, branchId!)))
+        .limit(1);
+      
+      if (!student) {
+        return res.status(404).json({ message: "학생을 찾을 수 없습니다." });
+      }
+      
+      // Update user
+      const userUpdate: any = { name };
+      if (phone) {
+        userUpdate.phone = phone;
+        userUpdate.username = phone; // phone is username
+      }
+      if (password) {
+        userUpdate.passwordHash = await hashPassword(password);
+      }
+      
+      await db.update(users).set(userUpdate).where(eq(users.id, student.userId));
+      
+      // Update student
+      const [updatedStudent] = await db.update(students)
+        .set({ school, grade, parentPhone })
+        .where(eq(students.id, id))
+        .returning();
+      
+      res.json({
+        success: true,
+        data: updatedStudent,
+        message: password ? "학생 정보가 수정되었습니다. (비밀번호 변경됨)" : "학생 정보가 수정되었습니다.",
+      });
+    } catch (error) {
+      console.error("Update student error:", error);
+      res.status(500).json({ message: "학생 수정 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Delete student
+  app.delete("/api/students/:id", requireBranchManager, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const branchId = req.session.user?.branchId;
+      
+      const [student] = await db.select().from(students)
+        .where(and(eq(students.id, id), eq(students.branchId, branchId!)))
+        .limit(1);
+      
+      if (!student) {
+        return res.status(404).json({ message: "학생을 찾을 수 없습니다." });
+      }
+      
+      // Delete related records
+      await db.delete(studentClasses).where(eq(studentClasses.studentId, id));
+      await db.delete(students).where(eq(students.id, id));
+      await db.delete(users).where(eq(users.id, student.userId));
+      
+      res.json({ success: true, message: "학생이 삭제되었습니다." });
+    } catch (error) {
+      console.error("Delete student error:", error);
+      res.status(500).json({ message: "학생 삭제 중 오류가 발생했습니다." });
     }
   });
 
@@ -392,14 +602,52 @@ export async function registerRoutes(
   app.get("/api/students/me", requireStudent, async (req, res) => {
     try {
       const userId = req.session.user?.id;
-      const [student] = await db.select()
-        .from(students)
-        .where(eq(students.userId, userId!))
-        .limit(1);
-      res.json(student);
+      const [studentData] = await db.select({
+        student: students,
+        user: users,
+      })
+      .from(students)
+      .innerJoin(users, eq(students.userId, users.id))
+      .where(eq(students.userId, userId!))
+      .limit(1);
+      
+      if (!studentData) {
+        return res.status(404).json({ message: "학생 정보를 찾을 수 없습니다." });
+      }
+      
+      res.json({ success: true, data: { ...studentData.student, user: studentData.user } });
     } catch (error) {
       console.error("Get student error:", error);
       res.status(500).json({ message: "학생 정보를 불러오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Branch stats endpoint
+  app.get("/api/branch-students/stats", requireBranchManager, async (req, res) => {
+    try {
+      const branchId = req.session.user?.branchId;
+      if (!branchId) {
+        return res.status(400).json({ message: "지점 정보가 없습니다." });
+      }
+      
+      const [studentCount] = await db.select({ count: sql<number>`count(*)` })
+        .from(students).where(eq(students.branchId, branchId));
+      const [classCount] = await db.select({ count: sql<number>`count(*)` })
+        .from(classes).where(eq(classes.branchId, branchId));
+      const [distCount] = await db.select({ count: sql<number>`count(*)` })
+        .from(examDistributions).where(eq(examDistributions.branchId, branchId));
+      
+      res.json({
+        success: true,
+        data: {
+          totalStudents: Number(studentCount.count) || 0,
+          totalClasses: Number(classCount.count) || 0,
+          totalDistributions: Number(distCount.count) || 0,
+        },
+      });
+    } catch (error) {
+      console.error("Get branch stats error:", error);
+      res.status(500).json({ message: "통계를 불러오는 중 오류가 발생했습니다." });
     }
   });
 
@@ -697,10 +945,14 @@ export async function registerRoutes(
     }
   });
 
-  // Get distributions for branch
+  // Get distributions for branch (GitHub exact format)
   app.get("/api/distributions", requireBranchManager, async (req, res) => {
     try {
       const branchId = req.session.user?.branchId;
+      if (!branchId) {
+        return res.status(400).json({ message: "지점 정보가 없습니다." });
+      }
+      
       const distributions = await db.select({
         distribution: examDistributions,
         exam: {
@@ -709,17 +961,162 @@ export async function registerRoutes(
           subject: exams.subject,
           grade: exams.grade,
           totalQuestions: exams.totalQuestions,
+          totalScore: exams.totalScore,
         },
       })
       .from(examDistributions)
       .innerJoin(exams, eq(examDistributions.examId, exams.id))
-      .where(branchId ? eq(examDistributions.branchId, branchId) : sql`1=1`)
+      .where(eq(examDistributions.branchId, branchId))
       .orderBy(desc(examDistributions.createdAt));
 
-      res.json({ data: distributions.map(d => ({ ...d.distribution, exam: d.exam })) });
+      res.json({ success: true, data: distributions.map(d => ({ ...d.distribution, exam: d.exam })) });
     } catch (error) {
       console.error("Get distributions error:", error);
       res.status(500).json({ message: "배포 목록을 불러오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Update distribution (redistribute to class/students)
+  app.put("/api/distributions/:id", requireBranchManager, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const branchId = req.session.user?.branchId;
+      const { classId, studentIds } = req.body;
+      
+      // Get distribution
+      const [distribution] = await db.select().from(examDistributions)
+        .where(and(eq(examDistributions.id, id), eq(examDistributions.branchId, branchId!)))
+        .limit(1);
+      
+      if (!distribution) {
+        return res.status(404).json({ message: "배포를 찾을 수 없습니다." });
+      }
+      
+      // Update distribution with classId
+      await db.update(examDistributions)
+        .set({ classId: classId || null })
+        .where(eq(examDistributions.id, id));
+      
+      // Delete existing student assignments
+      await db.delete(distributionStudents).where(eq(distributionStudents.distributionId, id));
+      
+      // If specific students are selected, create student assignments
+      if (studentIds && Array.isArray(studentIds) && studentIds.length > 0) {
+        await db.insert(distributionStudents).values(
+          studentIds.map((studentId: string) => ({
+            distributionId: id,
+            studentId,
+          }))
+        );
+      }
+      
+      res.json({
+        success: true,
+        message: studentIds && studentIds.length > 0
+          ? `${studentIds.length}명의 학생에게 시험이 배포되었습니다.`
+          : classId
+          ? "반에 시험이 배포되었습니다."
+          : "배포가 업데이트되었습니다.",
+      });
+    } catch (error) {
+      console.error("Update distribution error:", error);
+      res.status(500).json({ message: "배포 업데이트 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Get distribution students (GitHub exact format)
+  app.get("/api/distributions/:id/students", requireBranchManager, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const branchId = req.session.user?.branchId;
+      
+      // Get distribution
+      const [distribution] = await db.select().from(examDistributions)
+        .where(and(eq(examDistributions.id, id), eq(examDistributions.branchId, branchId!)))
+        .limit(1);
+      
+      if (!distribution) {
+        return res.status(404).json({ message: "배포를 찾을 수 없습니다." });
+      }
+      
+      // Get exam
+      const [exam] = await db.select().from(exams)
+        .where(eq(exams.id, distribution.examId)).limit(1);
+      
+      if (!exam) {
+        return res.status(404).json({ message: "시험을 찾을 수 없습니다." });
+      }
+      
+      // Get students based on distribution type
+      let studentsList: any[] = [];
+      
+      if (distribution.classId) {
+        // Class-specific distribution
+        studentsList = await db.select({ student: students, user: users })
+          .from(studentClasses)
+          .innerJoin(students, eq(studentClasses.studentId, students.id))
+          .innerJoin(users, eq(students.userId, users.id))
+          .where(and(
+            eq(students.branchId, branchId!),
+            eq(studentClasses.classId, distribution.classId)
+          ));
+      } else {
+        // Check for specific students
+        const specificStudents = await db.select().from(distributionStudents)
+          .where(eq(distributionStudents.distributionId, id));
+        
+        if (specificStudents.length > 0) {
+          const studentIds = specificStudents.map(s => s.studentId);
+          studentsList = await db.select({ student: students, user: users })
+            .from(students)
+            .innerJoin(users, eq(students.userId, users.id))
+            .where(and(
+              eq(students.branchId, branchId!),
+              inArray(students.id, studentIds)
+            ));
+        } else {
+          // All students in branch
+          studentsList = await db.select({ student: students, user: users })
+            .from(students)
+            .innerJoin(users, eq(students.userId, users.id))
+            .where(eq(students.branchId, branchId!));
+        }
+      }
+      
+      // Get attempts for each student
+      const result = await Promise.all(studentsList.map(async (row) => {
+        const [attempt] = await db.select().from(examAttempts)
+          .where(and(
+            eq(examAttempts.studentId, row.student.id),
+            eq(examAttempts.examId, exam.id)
+          )).limit(1);
+        
+        let report = null;
+        if (attempt) {
+          const [r] = await db.select().from(aiReports)
+            .where(eq(aiReports.attemptId, attempt.id)).limit(1);
+          report = r || null;
+        }
+        
+        return {
+          ...row.student,
+          user: { id: row.user.id, name: row.user.name, phone: row.user.phone },
+          attempt,
+          report,
+        };
+      }));
+      
+      res.json({
+        success: true,
+        data: {
+          distribution,
+          exam,
+          students: result,
+        },
+      });
+    } catch (error) {
+      console.error("Get distribution students error:", error);
+      res.status(500).json({ message: "배포 학생 목록 조회 중 오류가 발생했습니다." });
     }
   });
 
