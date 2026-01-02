@@ -84,6 +84,61 @@ export async function registerRoutes(
     });
   });
 
+  // Impersonate branch manager (admin only)
+  app.post("/api/auth/impersonate/:branchId", requireAdmin, async (req, res) => {
+    try {
+      const { branchId } = req.params;
+      
+      // Find branch manager for this branch
+      const [branchManager] = await db.select()
+        .from(users)
+        .where(and(
+          eq(users.role, "branch"),
+          eq(users.branchId, branchId)
+        ))
+        .limit(1);
+
+      if (!branchManager) {
+        return res.status(404).json({ message: "해당 지점의 관리자를 찾을 수 없습니다." });
+      }
+
+      // Store original admin user for later
+      const originalAdmin = req.session.user;
+
+      // Switch to branch manager
+      req.session.user = {
+        id: branchManager.id,
+        username: branchManager.username,
+        name: branchManager.name,
+        role: branchManager.role as any,
+        branchId: branchManager.branchId || undefined,
+      };
+      req.session.originalAdmin = originalAdmin;
+
+      res.json({ success: true, user: req.session.user, message: `${branchManager.name}으로 전환되었습니다.` });
+    } catch (error) {
+      console.error("Impersonate error:", error);
+      res.status(500).json({ message: "지점 관리자로 전환 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Return to admin (after impersonating)
+  app.post("/api/auth/return-to-admin", requireAuth, (req, res) => {
+    try {
+      if (!req.session.originalAdmin) {
+        return res.status(400).json({ message: "원래 관리자 정보가 없습니다." });
+      }
+
+      req.session.user = req.session.originalAdmin;
+      delete req.session.originalAdmin;
+
+      res.json({ success: true, user: req.session.user, message: "관리자로 복귀했습니다." });
+    } catch (error) {
+      console.error("Return to admin error:", error);
+      res.status(500).json({ message: "관리자로 복귀 중 오류가 발생했습니다." });
+    }
+  });
+
   // ============ BRANCH ROUTES ============
   
   // Get all branches (admin only)

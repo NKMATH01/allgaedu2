@@ -10,6 +10,13 @@ declare module 'express-session' {
       role: 'admin' | 'branch' | 'student' | 'parent';
       branchId?: string;
     };
+    originalAdmin?: {
+      id: string;
+      username: string;
+      name: string;
+      role: 'admin' | 'branch' | 'student' | 'parent';
+      branchId?: string;
+    };
   }
 }
 
