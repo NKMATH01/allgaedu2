@@ -6,10 +6,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/login";
-import AdminDashboard from "@/pages/admin-dashboard";
-import BranchDashboard from "@/pages/branch-dashboard";
-import StudentDashboard from "@/pages/student-dashboard";
-import ParentDashboard from "@/pages/parent-dashboard";
+import AdminDashboard from "@/pages/AdminDashboard";
+import BranchDashboard from "@/pages/BranchDashboard";
+import StudentDashboard from "@/pages/StudentDashboard";
+import ParentDashboard from "@/pages/ParentDashboard";
 import { Loader2 } from "lucide-react";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -34,15 +34,17 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function RoleBasedDashboard() {
   const { user } = useAuth();
 
-  switch (user?.role) {
+  if (!user) return <NotFound />;
+
+  switch (user.role) {
     case "admin":
-      return <AdminDashboard />;
+      return <AdminDashboard user={user} />;
     case "branch":
-      return <BranchDashboard />;
+      return <BranchDashboard user={user} />;
     case "student":
-      return <StudentDashboard />;
+      return <StudentDashboard user={user} />;
     case "parent":
-      return <ParentDashboard />;
+      return <ParentDashboard user={user} />;
     default:
       return <NotFound />;
   }

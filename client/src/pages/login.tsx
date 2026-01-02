@@ -1,55 +1,46 @@
-import { useState } from "react";
-import { useLocation } from "wouter";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { useAuth } from "@/lib/auth";
-import { useToast } from "@/hooks/use-toast";
-import { GraduationCap, LogIn, Loader2 } from "lucide-react";
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '../lib/api';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
+import { GraduationCap, LogIn } from 'lucide-react';
 
 export default function LoginPage() {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [userType, setUserType] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
-  const { toast } = useToast();
-  const [, setLocation] = useLocation();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [userType, setUserType] = useState('');
+  const queryClient = useQueryClient();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const loginMutation = useMutation({
+    mutationFn: async (data: { username: string; password: string; userType?: string }) => {
+      const res = await api.post('/auth/login', data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/auth/me'] });
+    },
+    onError: (error: any) => {
+      alert(error.response?.data?.message || '로그인에 실패했습니다.');
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-
-    try {
-      await login(username, password, userType || undefined);
-      toast({
-        title: "로그인 성공",
-        description: "환영합니다!",
-      });
-      setLocation("/");
-    } catch (error: any) {
-      toast({
-        title: "로그인 실패",
-        description: error.message || "아이디 또는 비밀번호를 확인해주세요.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
+    loginMutation.mutate({ username, password, userType: userType || undefined });
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-orange-400 via-red-500 to-pink-500 relative overflow-hidden">
+    <div className="flex min-h-screen items-center justify-center p-4 bg-gradient-to-br from-orange-400 via-red-500 to-pink-500 relative overflow-hidden">
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden">
         <div className="absolute -top-40 -left-40 w-80 h-80 bg-white/10 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-white/10 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-white/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
       </div>
 
-      <Card className="w-full max-w-md shadow-2xl border-0 relative z-10 backdrop-blur-sm bg-white/95 dark:bg-gray-900/95">
+      <Card className="w-full max-w-md shadow-2xl border-0 relative z-10 backdrop-blur-sm bg-white/95">
         <CardHeader className="space-y-4 pb-8">
           <div className="flex justify-center">
-            <div className="w-20 h-20 bg-gradient-to-br from-orange-500 to-red-600 rounded-2xl flex items-center justify-center shadow-lg">
+            <div className="w-20 h-20 bg-gradient-to-br from-orange-500 to-red-600 rounded-2xl flex items-center justify-center shadow-lg transform hover:scale-110 transition-transform duration-300">
               <GraduationCap className="w-12 h-12 text-white" />
             </div>
           </div>
@@ -57,7 +48,7 @@ export default function LoginPage() {
             <div className="text-3xl font-bold bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent">
               올가 미수등 시스템
             </div>
-            <div className="mt-2 text-sm font-normal text-muted-foreground">
+            <div className="mt-2 text-sm font-normal text-gray-500">
               ALLGA Academy Management System
             </div>
           </CardTitle>
@@ -65,35 +56,33 @@ export default function LoginPage() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="username" className="text-sm font-semibold">아이디</Label>
+              <label className="text-sm font-semibold text-gray-700">아이디</label>
               <Input
-                id="username"
                 type="text"
-                placeholder="아이디를 입력하세요"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                data-testid="input-username"
+                placeholder="아이디를 입력하세요"
                 required
-                className="h-11"
+                className="h-11 border-gray-200 focus:border-orange-500 focus:ring-orange-500"
+                data-testid="input-username"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-sm font-semibold">비밀번호</Label>
+              <label className="text-sm font-semibold text-gray-700">비밀번호</label>
               <Input
-                id="password"
                 type="password"
-                placeholder="비밀번호를 입력하세요"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                data-testid="input-password"
+                placeholder="비밀번호를 입력하세요"
                 required
-                className="h-11"
+                className="h-11 border-gray-200 focus:border-orange-500 focus:ring-orange-500"
+                data-testid="input-password"
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-sm font-semibold">계정 유형 (선택사항)</Label>
+              <label className="text-sm font-semibold text-gray-700">계정 유형 (선택사항)</label>
               <select
-                className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                className="flex h-11 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-500 focus:ring-offset-0 transition-all"
                 value={userType}
                 onChange={(e) => setUserType(e.target.value)}
                 data-testid="select-usertype"
@@ -107,28 +96,19 @@ export default function LoginPage() {
             </div>
             <Button
               type="submit"
-              className="w-full h-11 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-semibold shadow-lg"
-              disabled={isLoading}
+              className="w-full h-11 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-semibold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-200"
+              disabled={loginMutation.isPending}
               data-testid="button-login"
             >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  로그인 중...
-                </>
-              ) : (
-                <>
-                  <LogIn className="w-4 h-4 mr-2" />
-                  로그인
-                </>
-              )}
+              <LogIn className="w-4 h-4 mr-2" />
+              {loginMutation.isPending ? '로그인 중...' : '로그인'}
             </Button>
           </form>
-          <div className="mt-8 p-4 bg-muted rounded-lg border">
-            <p className="text-xs font-semibold text-foreground mb-2">테스트 계정</p>
-            <div className="space-y-1 text-xs text-muted-foreground">
-              <p>관리자: <span className="font-mono bg-background px-2 py-0.5 rounded">allga / allga</span></p>
-              <p>지점장: <span className="font-mono bg-background px-2 py-0.5 rounded">allga1 / allga1</span></p>
+          <div className="mt-8 p-4 bg-gray-50 rounded-lg border border-gray-100">
+            <p className="text-xs font-semibold text-gray-700 mb-2">테스트 계정</p>
+            <div className="space-y-1 text-xs text-gray-600">
+              <p>관리자: <span className="font-mono bg-white px-2 py-0.5 rounded">allga / allga</span></p>
+              <p>지점장: <span className="font-mono bg-white px-2 py-0.5 rounded">allga1 / allga1</span></p>
             </div>
           </div>
         </CardContent>
