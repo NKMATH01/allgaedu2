@@ -31,14 +31,22 @@ export async function registerRoutes(
   // Login
   app.post("/api/auth/login", async (req, res) => {
     try {
-      const { username, password } = req.body;
+      const { username, password, userType } = req.body;
       if (!username || !password) {
         return res.status(400).json({ message: "아이디와 비밀번호를 입력해주세요." });
       }
 
-      const [user] = await db.select().from(users).where(eq(users.username, username)).limit(1);
+      // Find user by username, optionally filter by role if userType specified
+      let query = db.select().from(users).where(eq(users.username, username));
+      const [user] = await query.limit(1);
+      
       if (!user || !user.isActive) {
         return res.status(401).json({ message: "아이디 또는 비밀번호가 올바르지 않습니다." });
+      }
+
+      // If userType specified and not 'auto', verify role matches
+      if (userType && userType !== 'auto' && user.role !== userType) {
+        return res.status(401).json({ message: "선택한 계정 유형과 일치하지 않습니다." });
       }
 
       const isValid = await verifyPassword(password, user.passwordHash);
@@ -810,7 +818,7 @@ ${wrongAnswers.map(q => `- ${q.questionNumber}번: 정답 ${q.correctAnswer}번,
 
   // ============ INIT ADMIN ============
   
-  // Create initial admin (only if no admin exists)
+  // Create initial admin and test accounts (only if no admin exists)
   app.post("/api/init", async (req, res) => {
     try {
       const existingAdmin = await db.select().from(users).where(eq(users.role, "admin")).limit(1);
@@ -818,18 +826,44 @@ ${wrongAnswers.map(q => `- ${q.questionNumber}번: 정답 ${q.correctAnswer}번,
         return res.status(400).json({ message: "관리자가 이미 존재합니다." });
       }
 
-      const passwordHash = await hashPassword("admin123");
+      // Create admin account: allga / allga
+      const adminPasswordHash = await hashPassword("allga");
       const [admin] = await db.insert(users).values({
-        username: "admin",
-        passwordHash,
-        name: "시스템 관리자",
+        username: "allga",
+        passwordHash: adminPasswordHash,
+        name: "총괄 관리자",
         role: "admin",
       }).returning();
 
-      res.json({ success: true, message: "관리자 계정이 생성되었습니다.", user: { username: admin.username } });
+      // Create a default branch: 강남점
+      const [gangnamBranch] = await db.insert(branches).values({
+        name: "강남점",
+        address: "서울시 강남구",
+        phone: "02-1234-5678",
+        managerName: "강남점 관리자",
+      }).returning();
+
+      // Create branch manager account: allga1 / allga1
+      const branchPasswordHash = await hashPassword("allga1");
+      await db.insert(users).values({
+        username: "allga1",
+        passwordHash: branchPasswordHash,
+        name: "강남점 관리자",
+        role: "branch",
+        branchId: gangnamBranch.id,
+      });
+
+      res.json({ 
+        success: true, 
+        message: "초기 계정이 생성되었습니다.", 
+        accounts: [
+          { type: "관리자", username: "allga", password: "allga" },
+          { type: "지점장", username: "allga1", password: "allga1" },
+        ]
+      });
     } catch (error) {
       console.error("Init admin error:", error);
-      res.status(500).json({ message: "관리자 생성 중 오류가 발생했습니다." });
+      res.status(500).json({ message: "초기 설정 중 오류가 발생했습니다." });
     }
   });
 
