@@ -432,44 +432,95 @@ export async function registerRoutes(
       const workbook = XLSX.read(file.buffer, { type: "buffer" });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
-      const data = XLSX.utils.sheet_to_json(sheet) as any[];
-
-      // Log first row to debug column names
-      if (data.length > 0) {
-        console.log("Excel columns:", Object.keys(data[0]));
-        console.log("First row data:", data[0]);
-      }
-
-      // Helper function to find value from multiple possible column names
-      const getVal = (row: any, keys: string[], defaultVal: any = "") => {
-        for (const key of keys) {
-          if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
-            return row[key];
+      
+      // Get raw data as 2D array to find the header row
+      const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as any[][];
+      
+      console.log("Total rows in Excel:", rawData.length);
+      console.log("First 5 rows:", rawData.slice(0, 5));
+      
+      // Find header row (row containing '문항번호' or '번호' or similar)
+      let headerRowIndex = -1;
+      const headerKeywords = ["문항번호", "번호", "문항", "정답", "배점"];
+      
+      for (let i = 0; i < Math.min(rawData.length, 20); i++) {
+        const row = rawData[i];
+        if (Array.isArray(row)) {
+          const rowStr = row.map(c => String(c || "").trim()).join(" ");
+          if (headerKeywords.some(kw => rowStr.includes(kw))) {
+            headerRowIndex = i;
+            console.log("Found header row at index:", i, "Row:", row);
+            break;
           }
         }
-        return defaultVal;
-      };
-
-      // Parse questions from Excel with flexible column mapping
-      const questionsData = data.map((row, index) => {
-        const questionNumber = getVal(row, ["문항번호", "번호", "문항", "No", "no", "번", "문제번호"], index + 1);
-        const correctAnswer = getVal(row, ["정답", "답", "answer", "Answer", "정답번호"], 1);
-        const score = getVal(row, ["배점", "점수", "score", "Score", "점", "만점"], 1);
-        const topic = getVal(row, ["단원", "영역", "대단원", "topic", "Topic", "유형", "단원명"], "");
-        const concept = getVal(row, ["개념", "소단원", "concept", "세부내용", "내용", "문제유형"], "");
-        const difficulty = getVal(row, ["난이도", "difficulty", "수준", "등급"], "중");
-
-        return {
-          questionNumber: Number(questionNumber) || index + 1,
-          correctAnswer: Number(correctAnswer) || 1,
-          score: Number(score) || 1,
-          topic: String(topic),
-          concept: String(concept),
-          difficulty: String(difficulty),
-        };
+      }
+      
+      if (headerRowIndex === -1) {
+        console.log("Header row not found, using first row as header");
+        headerRowIndex = 0;
+      }
+      
+      // Get headers from the header row
+      const headers = rawData[headerRowIndex].map((h: any) => String(h || "").trim());
+      console.log("Headers:", headers);
+      
+      // Build column index map
+      const colMap: { [key: string]: number } = {};
+      headers.forEach((h: string, idx: number) => {
+        colMap[h] = idx;
       });
-
-      console.log("Parsed questions sample:", questionsData.slice(0, 3));
+      
+      // Helper function to get column index for multiple possible names
+      const getColIdx = (keys: string[]): number => {
+        for (const key of keys) {
+          if (colMap[key] !== undefined) return colMap[key];
+        }
+        return -1;
+      };
+      
+      const questionNumIdx = getColIdx(["문항번호", "번호", "문항", "No", "no"]);
+      const answerIdx = getColIdx(["정답", "답", "answer", "Answer"]);
+      const scoreIdx = getColIdx(["배점", "점수", "score", "Score"]);
+      const topicIdx = getColIdx(["단원", "영역", "대단원", "topic", "유형"]);
+      const conceptIdx = getColIdx(["개념", "소단원", "concept", "내용", "문제유형"]);
+      const difficultyIdx = getColIdx(["난이도", "difficulty", "수준"]);
+      
+      console.log("Column indices:", { questionNumIdx, answerIdx, scoreIdx, topicIdx, conceptIdx, difficultyIdx });
+      
+      // Parse data rows (after header)
+      const questionsData: any[] = [];
+      for (let i = headerRowIndex + 1; i < rawData.length; i++) {
+        const row = rawData[i];
+        if (!row || row.length === 0) continue;
+        
+        // Skip empty rows or summary rows
+        const firstCell = String(row[0] || "").trim();
+        if (!firstCell || firstCell === "" || firstCell.includes("총") || firstCell.includes("합계")) continue;
+        
+        const questionNumber = questionNumIdx >= 0 ? row[questionNumIdx] : (questionsData.length + 1);
+        const correctAnswer = answerIdx >= 0 ? row[answerIdx] : 1;
+        const score = scoreIdx >= 0 ? row[scoreIdx] : 1;
+        const topic = topicIdx >= 0 ? row[topicIdx] : "";
+        const concept = conceptIdx >= 0 ? row[conceptIdx] : "";
+        const difficulty = difficultyIdx >= 0 ? row[difficultyIdx] : "중";
+        
+        // Only add if it looks like a valid question row (has numeric question number or answer)
+        const qNum = Number(questionNumber);
+        const ans = Number(correctAnswer);
+        if (!isNaN(qNum) || !isNaN(ans)) {
+          questionsData.push({
+            questionNumber: qNum || (questionsData.length + 1),
+            correctAnswer: ans || 1,
+            score: Number(score) || 1,
+            topic: String(topic || ""),
+            concept: String(concept || ""),
+            difficulty: String(difficulty || "중"),
+          });
+        }
+      }
+      
+      console.log("Parsed questions count:", questionsData.length);
+      console.log("Parsed questions sample:", questionsData.slice(0, 5));
 
       const totalQuestions = questionsData.length;
       const totalScore = questionsData.reduce((sum, q) => sum + q.score, 0);
