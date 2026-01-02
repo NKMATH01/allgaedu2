@@ -434,15 +434,42 @@ export async function registerRoutes(
       const sheet = workbook.Sheets[sheetName];
       const data = XLSX.utils.sheet_to_json(sheet) as any[];
 
-      // Parse questions from Excel
-      const questionsData = data.map((row, index) => ({
-        questionNumber: row["문항번호"] || index + 1,
-        correctAnswer: Number(row["정답"]) || 1,
-        score: Number(row["배점"]) || 1,
-        topic: row["단원"] || "",
-        concept: row["개념"] || "",
-        difficulty: row["난이도"] || "중",
-      }));
+      // Log first row to debug column names
+      if (data.length > 0) {
+        console.log("Excel columns:", Object.keys(data[0]));
+        console.log("First row data:", data[0]);
+      }
+
+      // Helper function to find value from multiple possible column names
+      const getVal = (row: any, keys: string[], defaultVal: any = "") => {
+        for (const key of keys) {
+          if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
+            return row[key];
+          }
+        }
+        return defaultVal;
+      };
+
+      // Parse questions from Excel with flexible column mapping
+      const questionsData = data.map((row, index) => {
+        const questionNumber = getVal(row, ["문항번호", "번호", "문항", "No", "no", "번", "문제번호"], index + 1);
+        const correctAnswer = getVal(row, ["정답", "답", "answer", "Answer", "정답번호"], 1);
+        const score = getVal(row, ["배점", "점수", "score", "Score", "점", "만점"], 1);
+        const topic = getVal(row, ["단원", "영역", "대단원", "topic", "Topic", "유형", "단원명"], "");
+        const concept = getVal(row, ["개념", "소단원", "concept", "세부내용", "내용", "문제유형"], "");
+        const difficulty = getVal(row, ["난이도", "difficulty", "수준", "등급"], "중");
+
+        return {
+          questionNumber: Number(questionNumber) || index + 1,
+          correctAnswer: Number(correctAnswer) || 1,
+          score: Number(score) || 1,
+          topic: String(topic),
+          concept: String(concept),
+          difficulty: String(difficulty),
+        };
+      });
+
+      console.log("Parsed questions sample:", questionsData.slice(0, 3));
 
       const totalQuestions = questionsData.length;
       const totalScore = questionsData.reduce((sum, q) => sum + q.score, 0);
