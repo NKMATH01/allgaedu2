@@ -86,7 +86,7 @@ export default function AdminDashboard({ user }: { user: User }) {
 
   const updateBranchMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
-      const res = await api.put(`/branches/${id}`, data);
+      const res = await api.patch(`/branches/${id}`, data);
       return res.data;
     },
     onSuccess: () => {
@@ -864,7 +864,7 @@ export default function AdminDashboard({ user }: { user: User }) {
                     grade: formData.get('grade'),
                     description: formData.get('description'),
                     totalQuestions: questionsData.length,
-                    totalScore: questionsData.reduce((sum, q) => sum + q.points, 0),
+                    totalScore: questionsData.reduce((sum: number, q: { points: number }) => sum + q.points, 0),
                     questionsData,
                     overallReview: formData.get('overallReview'),
                   };

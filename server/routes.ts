@@ -90,7 +90,7 @@ export async function registerRoutes(
   app.get("/api/branches", requireAdmin, async (req, res) => {
     try {
       const allBranches = await db.select().from(branches).orderBy(branches.displayOrder);
-      res.json(allBranches);
+      res.json({ data: allBranches });
     } catch (error) {
       console.error("Get branches error:", error);
       res.status(500).json({ message: "지점 목록을 불러오는 중 오류가 발생했습니다." });
@@ -107,7 +107,7 @@ export async function registerRoutes(
         phone,
         managerName,
       }).returning();
-      res.json(branch);
+      res.json({ success: true, data: branch });
     } catch (error) {
       console.error("Create branch error:", error);
       res.status(500).json({ message: "지점 생성 중 오류가 발생했습니다." });
@@ -123,7 +123,7 @@ export async function registerRoutes(
         .set({ name, address, phone, managerName, isActive, displayOrder, updatedAt: new Date() })
         .where(eq(branches.id, id))
         .returning();
-      res.json(branch);
+      res.json({ success: true, data: branch });
     } catch (error) {
       console.error("Update branch error:", error);
       res.status(500).json({ message: "지점 수정 중 오류가 발생했습니다." });
@@ -319,15 +319,52 @@ export async function registerRoutes(
   app.get("/api/exams", requireBranchManager, async (req, res) => {
     try {
       const examList = await db.select().from(exams).orderBy(desc(exams.createdAt));
-      res.json(examList);
+      res.json({ data: examList });
     } catch (error) {
       console.error("Get exams error:", error);
       res.status(500).json({ message: "시험 목록을 불러오는 중 오류가 발생했습니다." });
     }
   });
 
+  // Create exam manually (JSON body)
+  app.post("/api/exams", requireAdmin, async (req, res) => {
+    try {
+      const { title, subject, grade, description, totalQuestions: tq, questionsData: qd } = req.body;
+
+      const totalQuestions = tq || 20;
+      
+      // Generate default questions if not provided
+      const questionsData = qd || Array.from({ length: totalQuestions }, (_, i) => ({
+        questionNumber: i + 1,
+        correctAnswer: ((i % 5) + 1),
+        score: 2,
+        topic: "",
+        concept: "",
+        difficulty: "중",
+      }));
+
+      const totalScore = questionsData.reduce((sum: number, q: any) => sum + (q.score || q.points || 2), 0);
+
+      const [exam] = await db.insert(exams).values({
+        title,
+        subject: subject || "국어",
+        grade,
+        description: description || "",
+        totalQuestions,
+        totalScore,
+        questionsData,
+        createdBy: req.session.user!.id,
+      }).returning();
+
+      res.json({ success: true, data: exam, message: "시험이 생성되었습니다." });
+    } catch (error) {
+      console.error("Create exam error:", error);
+      res.status(500).json({ message: "시험 생성 중 오류가 발생했습니다." });
+    }
+  });
+
   // Create exam with Excel upload
-  app.post("/api/exams", requireAdmin, upload.single("file"), async (req, res) => {
+  app.post("/api/exams/upload", requireAdmin, upload.single("file"), async (req, res) => {
     try {
       const { title, subject, grade, description } = req.body;
       const file = req.file;
@@ -356,20 +393,20 @@ export async function registerRoutes(
       const totalScore = questionsData.reduce((sum, q) => sum + q.score, 0);
 
       const [exam] = await db.insert(exams).values({
-        title,
-        subject,
-        grade,
-        description,
+        title: title || file.originalname.replace('.xlsx', ''),
+        subject: subject || "국어",
+        grade: grade || "",
+        description: description || "",
         totalQuestions,
         totalScore,
         questionsData,
         createdBy: req.session.user!.id,
       }).returning();
 
-      res.json(exam);
+      res.json({ success: true, data: exam, message: "시험이 업로드되었습니다." });
     } catch (error) {
       console.error("Create exam error:", error);
-      res.status(500).json({ message: "시험 생성 중 오류가 발생했습니다." });
+      res.status(500).json({ message: "시험 업로드 중 오류가 발생했습니다." });
     }
   });
 
@@ -381,16 +418,69 @@ export async function registerRoutes(
       if (!exam) {
         return res.status(404).json({ message: "시험을 찾을 수 없습니다." });
       }
-      res.json(exam);
+      res.json({ data: exam });
     } catch (error) {
       console.error("Get exam error:", error);
       res.status(500).json({ message: "시험 정보를 불러오는 중 오류가 발생했습니다." });
     }
   });
 
+  // Delete exam
+  app.delete("/api/exams/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await db.delete(examDistributions).where(eq(examDistributions.examId, id));
+      await db.delete(exams).where(eq(exams.id, id));
+      res.json({ success: true, message: "시험이 삭제되었습니다." });
+    } catch (error) {
+      console.error("Delete exam error:", error);
+      res.status(500).json({ message: "시험 삭제 중 오류가 발생했습니다." });
+    }
+  });
+
   // ============ EXAM DISTRIBUTION ROUTES ============
 
-  // Distribute exam to branch
+  // Create distribution (admin - distribute to multiple branches)
+  app.post("/api/distributions", requireAdmin, async (req, res) => {
+    try {
+      const { examId, branchIds, startDate, endDate } = req.body;
+
+      if (!examId || !branchIds || branchIds.length === 0) {
+        return res.status(400).json({ message: "시험과 지점을 선택해주세요." });
+      }
+
+      const distributions = [];
+      for (const branchId of branchIds) {
+        const [distribution] = await db.insert(examDistributions).values({
+          examId,
+          branchId,
+          startDate: startDate ? new Date(startDate) : new Date(),
+          endDate: endDate ? new Date(endDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          distributedBy: req.session.user!.id,
+        }).returning();
+        distributions.push(distribution);
+      }
+
+      res.json({ success: true, data: distributions, message: `${distributions.length}개 지점에 배포되었습니다.` });
+    } catch (error) {
+      console.error("Create distribution error:", error);
+      res.status(500).json({ message: "시험 배포 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Delete distribution
+  app.delete("/api/distributions/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await db.delete(examDistributions).where(eq(examDistributions.id, id));
+      res.json({ success: true, message: "배포가 삭제되었습니다." });
+    } catch (error) {
+      console.error("Delete distribution error:", error);
+      res.status(500).json({ message: "배포 삭제 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Distribute exam to branch (legacy)
   app.post("/api/exams/:examId/distribute", requireAdmin, async (req, res) => {
     try {
       const { examId } = req.params;
@@ -404,7 +494,7 @@ export async function registerRoutes(
         distributedBy: req.session.user!.id,
       }).returning();
 
-      res.json(distribution);
+      res.json({ success: true, data: distribution });
     } catch (error) {
       console.error("Distribute exam error:", error);
       res.status(500).json({ message: "시험 배포 중 오류가 발생했습니다." });
@@ -463,7 +553,7 @@ export async function registerRoutes(
       .where(branchId ? eq(examDistributions.branchId, branchId) : sql`1=1`)
       .orderBy(desc(examDistributions.createdAt));
 
-      res.json(distributions.map(d => ({ ...d.distribution, exam: d.exam })));
+      res.json({ data: distributions.map(d => ({ ...d.distribution, exam: d.exam })) });
     } catch (error) {
       console.error("Get distributions error:", error);
       res.status(500).json({ message: "배포 목록을 불러오는 중 오류가 발생했습니다." });
@@ -776,12 +866,12 @@ ${wrongAnswers.map(q => `- ${q.questionNumber}번: 정답 ${q.correctAnswer}번,
       const [examCount] = await db.select({ count: sql<number>`count(*)` }).from(exams);
       const [attemptCount] = await db.select({ count: sql<number>`count(*)` }).from(examAttempts);
 
-      res.json({
+      res.json({ data: {
         branches: Number(branchCount.count),
         students: Number(studentCount.count),
         exams: Number(examCount.count),
         attempts: Number(attemptCount.count),
-      });
+      }});
     } catch (error) {
       console.error("Get admin stats error:", error);
       res.status(500).json({ message: "통계를 불러오는 중 오류가 발생했습니다." });
@@ -805,11 +895,11 @@ ${wrongAnswers.map(q => `- ${q.questionNumber}번: 정답 ${q.correctAnswer}번,
         .from(examDistributions)
         .where(eq(examDistributions.branchId, branchId!));
 
-      res.json({
+      res.json({ data: {
         students: Number(studentCount.count),
         classes: Number(classCount.count),
         distributions: Number(distCount.count),
-      });
+      }});
     } catch (error) {
       console.error("Get branch stats error:", error);
       res.status(500).json({ message: "통계를 불러오는 중 오류가 발생했습니다." });
