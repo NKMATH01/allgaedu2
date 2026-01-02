@@ -418,140 +418,122 @@ export async function registerRoutes(
     }
   });
 
-  // Create exam with Excel upload
+  // Create exam with Excel upload (EXACT copy from GitHub)
   app.post("/api/exams/upload", requireAdmin, upload.single("file"), async (req, res) => {
     try {
-      const { title, subject, grade, description } = req.body;
-      const file = req.file;
-
-      if (!file) {
-        return res.status(400).json({ message: "엑셀 파일을 업로드해주세요." });
+      if (!req.file) {
+        return res.status(400).json({ message: "Excel 파일을 업로드해주세요." });
       }
 
       // Parse Excel file
-      const workbook = XLSX.read(file.buffer, { type: "buffer" });
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
       const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      
-      // Get raw data as 2D array to find the header row
-      const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as any[][];
-      
-      console.log("Total rows in Excel:", rawData.length);
-      console.log("First 5 rows:", rawData.slice(0, 5));
-      
-      // Find header row - must contain BOTH "정답" AND "배점" (or similar scoring headers)
-      let headerRowIndex = -1;
-      
-      for (let i = 0; i < Math.min(rawData.length, 20); i++) {
-        const row = rawData[i];
-        if (Array.isArray(row)) {
-          const rowStr = row.map(c => String(c || "").trim()).join(" ");
-          // Must have both answer column and score column to be the header row
-          const hasAnswer = rowStr.includes("정답") || rowStr.includes("답");
-          const hasScore = rowStr.includes("배점") || rowStr.includes("점수");
-          const hasNumber = rowStr.includes("번호") || rowStr.includes("문항");
-          
-          if (hasAnswer && hasScore && hasNumber) {
-            headerRowIndex = i;
-            console.log("Found header row at index:", i, "Row:", row);
-            break;
+      const worksheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+
+      // Extract metadata from first rows
+      const title = data[0]?.[0] || "제목 없음";
+      const subject = data[1]?.[0] || "과목 미지정";
+
+      // Parse questions data (starting from row 4, index 3)
+      // Column structure: 번호, 난이도, 출제영역, 유형분석, 소분류, 해설, 정답, 배점
+      const questionsData: any[] = [];
+      const seenQuestionNumbers = new Set<number>();
+
+      for (let i = 3; i < data.length && i < 100; i++) {
+        const row = data[i];
+        if (!row || !row[0]) continue;
+
+        const questionNumber = parseInt(String(row[0]));
+        if (isNaN(questionNumber)) continue;
+
+        // Skip duplicates (keep last occurrence)
+        if (seenQuestionNumbers.has(questionNumber)) {
+          const existingIndex = questionsData.findIndex((q) => q.number === questionNumber);
+          if (existingIndex >= 0) {
+            questionsData.splice(existingIndex, 1);
           }
         }
-      }
-      
-      if (headerRowIndex === -1) {
-        console.log("Header row not found, using first row as header");
-        headerRowIndex = 0;
-      }
-      
-      // Get headers from the header row
-      const headers = rawData[headerRowIndex].map((h: any) => String(h || "").trim());
-      console.log("Headers:", headers);
-      
-      // Build column index map
-      const colMap: { [key: string]: number } = {};
-      headers.forEach((h: string, idx: number) => {
-        colMap[h] = idx;
-      });
-      
-      // Helper function to get column index for multiple possible names
-      const getColIdx = (keys: string[]): number => {
-        for (const key of keys) {
-          if (colMap[key] !== undefined) return colMap[key];
+        seenQuestionNumbers.add(questionNumber);
+
+        const difficulty = row[1] || "중";
+        const domain = row[2] || "미분류";
+        const typeAnalysis = row[3] || "";
+        const subcategory = row[4] || "";
+        const explanation = row[5] || "";
+        const correctAnswer = parseInt(String(row[6]));
+        const points = parseInt(String(row[7])) || 2;
+
+        if (isNaN(correctAnswer) || isNaN(points)) {
+          continue;
         }
-        return -1;
-      };
-      
-      const questionNumIdx = getColIdx(["문항번호", "번호", "문항", "No", "no", "문제번호"]);
-      const answerIdx = getColIdx(["정답", "답", "answer", "Answer", "정답번호"]);
-      const scoreIdx = getColIdx(["배점", "점수", "score", "Score", "만점"]);
-      const topicIdx = getColIdx(["단원", "영역", "대단원", "topic", "유형", "출제영역"]);
-      const conceptIdx = getColIdx(["개념", "소단원", "concept", "내용", "문제유형", "유형분석", "소분류"]);
-      const difficultyIdx = getColIdx(["난이도", "difficulty", "수준"]);
-      
-      console.log("Column indices:", { questionNumIdx, answerIdx, scoreIdx, topicIdx, conceptIdx, difficultyIdx });
-      
-      // Parse data rows (after header)
-      const questionsData: any[] = [];
-      for (let i = headerRowIndex + 1; i < rawData.length; i++) {
-        const row = rawData[i];
-        if (!row || row.length === 0) continue;
-        
-        // Skip empty rows or summary rows
-        const firstCell = String(row[0] || "").trim();
-        if (!firstCell || firstCell === "" || firstCell.includes("총") || firstCell.includes("합계")) continue;
-        
-        const questionNumber = questionNumIdx >= 0 ? row[questionNumIdx] : (questionsData.length + 1);
-        const correctAnswer = answerIdx >= 0 ? row[answerIdx] : 1;
-        const score = scoreIdx >= 0 ? row[scoreIdx] : 1;
-        const topic = topicIdx >= 0 ? row[topicIdx] : "";
-        const concept = conceptIdx >= 0 ? row[conceptIdx] : "";
-        const difficulty = difficultyIdx >= 0 ? row[difficultyIdx] : "중";
-        
-        // Only add if it looks like a valid question row (has numeric question number or answer)
-        const qNum = Number(questionNumber);
-        const ans = Number(correctAnswer);
-        if (!isNaN(qNum) || !isNaN(ans)) {
-          questionsData.push({
-            questionNumber: qNum || (questionsData.length + 1),
-            correctAnswer: ans || 1,
-            score: Number(score) || 1,
-            topic: String(topic || ""),
-            concept: String(concept || ""),
-            difficulty: String(difficulty || "중"),
+
+        questionsData.push({
+          number: questionNumber,
+          questionNumber,
+          difficulty: String(difficulty),
+          domain: String(domain),
+          category: String(domain),
+          typeAnalysis: String(typeAnalysis),
+          questionIntent: String(typeAnalysis),
+          subcategory: String(subcategory),
+          explanation: String(explanation),
+          correctAnswer,
+          score: points,
+          points,
+        });
+      }
+
+      if (questionsData.length === 0) {
+        return res.status(400).json({ message: "문제 데이터를 찾을 수 없습니다." });
+      }
+
+      // Calculate total score
+      const totalScore = questionsData.reduce((sum, q) => sum + q.points, 0);
+
+      // Parse exam trends (rows 50-52, index 49-51)
+      const examTrends: any[] = [];
+      for (let i = 49; i < 52 && i < data.length; i++) {
+        const row = data[i];
+        if (row && row[0] && row[1]) {
+          examTrends.push({
+            questionNumbers: String(row[0]),
+            description: String(row[1]),
           });
         }
       }
-      
-      console.log("Parsed questions count:", questionsData.length);
-      console.log("Parsed questions sample:", questionsData.slice(0, 5));
 
-      const totalQuestions = questionsData.length;
-      const totalScore = questionsData.reduce((sum, q) => sum + q.score, 0);
+      // Parse overall review (row 54, index 53)
+      const overallReview = data[53]?.[0] || "";
 
-      // Fix filename encoding (multer sometimes garbles Korean filenames)
-      let fileName = file.originalname;
-      try {
-        fileName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-      } catch (e) {
-        // fallback to original
-      }
-      fileName = fileName.replace(/\.xlsx$/i, '').replace(/\.xls$/i, '');
+      // Insert exam into database
+      const [exam] = await db
+        .insert(exams)
+        .values({
+          title: String(title),
+          subject: String(subject),
+          totalQuestions: questionsData.length,
+          totalScore,
+          questionsData,
+          examTrends: examTrends.length > 0 ? examTrends : null,
+          overallReview: overallReview ? String(overallReview) : null,
+          createdBy: req.session.user!.id,
+        })
+        .returning();
 
-      const [exam] = await db.insert(exams).values({
-        title: title || fileName,
-        subject: subject || "국어",
-        grade: grade || "",
-        description: description || "",
-        totalQuestions,
-        totalScore,
-        questionsData,
-        createdBy: req.session.user!.id,
-      }).returning();
-
-      res.json({ success: true, data: exam, message: "시험이 업로드되었습니다." });
+      res.json({
+        success: true,
+        message: "시험이 업로드되었습니다.",
+        data: exam,
+        exam: {
+          id: exam.id,
+          title: exam.title,
+          totalQuestions: exam.totalQuestions,
+          totalScore: exam.totalScore,
+        },
+      });
     } catch (error) {
-      console.error("Create exam error:", error);
+      console.error("Upload exam error:", error);
       res.status(500).json({ message: "시험 업로드 중 오류가 발생했습니다." });
     }
   });
