@@ -1775,9 +1775,17 @@ ${JSON.stringify(userData, null, 2)}`;
 
       console.log('[AI Report] Generated successfully for:', user.name);
       res.json(report);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Generate report error:", error);
-      res.status(500).json({ message: "AI 리포트 생성 중 오류가 발생했습니다." });
+      
+      // Handle rate limit error (429)
+      if (error?.status === 429 || error?.statusText === 'Too Many Requests') {
+        res.status(429).json({ message: "AI 요청이 너무 많습니다. 1분 후에 다시 시도해주세요." });
+      } else if (error?.message?.includes('API key')) {
+        res.status(500).json({ message: "Gemini API 키가 설정되지 않았습니다. 관리자에게 문의하세요." });
+      } else {
+        res.status(500).json({ message: "AI 리포트 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요." });
+      }
     }
   });
 
