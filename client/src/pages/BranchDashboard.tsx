@@ -52,6 +52,8 @@ export default function BranchDashboard({ user }: { user: User }) {
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [expandedDistributeGrades, setExpandedDistributeGrades] = useState<Record<string, boolean>>({});
   const [answerStates, setAnswerStates] = useState<Record<number, 'correct' | 'wrong' | null>>({});
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [selectedReport, setSelectedReport] = useState<any>(null);
 
   const { data: students, refetch: refetchStudents } = useQuery({
     queryKey: ['students', user.branchId],
@@ -707,7 +709,18 @@ export default function BranchDashboard({ user }: { user: User }) {
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge variant="default">분석 완료</Badge>
-                            <Button size="sm" variant="outline">
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedReport({
+                                  ...examData,
+                                  studentName: selectedStudent.user?.name,
+                                });
+                                setShowReportModal(true);
+                              }}
+                              data-testid={`button-view-report-${examData.distribution?.id}`}
+                            >
                               보고서 보기
                             </Button>
                           </div>
@@ -1453,6 +1466,133 @@ export default function BranchDashboard({ user }: { user: User }) {
             
             <div className="p-4 border-t flex justify-end">
               <Button type="button" variant="outline" onClick={() => { setShowAnswerModal(false); setSelectedAttempt(null); setAnswerStates({}); }}>
+                닫기
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+      
+      {showReportModal && selectedReport && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="modal-report">
+          <Card className="w-full max-w-4xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950 p-4 border-b">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
+                    <Sparkles className="w-5 h-5 text-blue-600 dark:text-blue-300" />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold text-lg">AI 분석 보고서</h2>
+                    <p className="text-sm text-muted-foreground">{selectedReport.studentName} - {selectedReport.exam?.title}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">{selectedReport.score}/{selectedReport.maxScore}점</Badge>
+                  <Badge>{selectedReport.grade}등급</Badge>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6">
+              {selectedReport.report ? (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+                      <BookOpen className="w-5 h-5" />
+                      성적 요약
+                    </h3>
+                    <Card>
+                      <CardContent className="p-4">
+                        <p className="text-muted-foreground">{selectedReport.report.summary || selectedReport.report.analysis?.summary}</p>
+                      </CardContent>
+                    </Card>
+                  </div>
+                  
+                  {(selectedReport.report.weakAreas?.length > 0 || selectedReport.report.analysis?.weakAreas?.length > 0) && (
+                    <div>
+                      <h3 className="font-semibold text-lg mb-2 text-red-600 flex items-center gap-2">
+                        <X className="w-5 h-5" />
+                        취약 영역
+                      </h3>
+                      <Card>
+                        <CardContent className="p-4">
+                          <ul className="list-disc list-inside space-y-1">
+                            {(selectedReport.report.weakAreas || selectedReport.report.analysis?.weakAreas || []).map((area: string, i: number) => (
+                              <li key={i} className="text-muted-foreground">{area}</li>
+                            ))}
+                          </ul>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+                  
+                  {(selectedReport.report.analysis?.strengths?.length > 0) && (
+                    <div>
+                      <h3 className="font-semibold text-lg mb-2 text-green-600 flex items-center gap-2">
+                        <Check className="w-5 h-5" />
+                        강점
+                      </h3>
+                      <Card>
+                        <CardContent className="p-4">
+                          <ul className="list-disc list-inside space-y-1">
+                            {selectedReport.report.analysis.strengths.map((s: string, i: number) => (
+                              <li key={i} className="text-muted-foreground">{s}</li>
+                            ))}
+                          </ul>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+                  
+                  {(selectedReport.report.recommendations?.length > 0 || selectedReport.report.analysis?.recommendations?.length > 0) && (
+                    <div>
+                      <h3 className="font-semibold text-lg mb-2 text-blue-600 flex items-center gap-2">
+                        <Sparkles className="w-5 h-5" />
+                        학습 추천
+                      </h3>
+                      <Card>
+                        <CardContent className="p-4">
+                          <ul className="list-decimal list-inside space-y-2">
+                            {(selectedReport.report.recommendations || selectedReport.report.analysis?.recommendations || []).map((rec: string, i: number) => (
+                              <li key={i} className="text-muted-foreground">{rec}</li>
+                            ))}
+                          </ul>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+                  
+                  {selectedReport.report.analysis?.studyPlan && (
+                    <div>
+                      <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+                        <GraduationCap className="w-5 h-5" />
+                        학습 계획
+                      </h3>
+                      <Card>
+                        <CardContent className="p-4">
+                          <p className="text-muted-foreground whitespace-pre-wrap">{selectedReport.report.analysis.studyPlan}</p>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+                  
+                  {selectedReport.report.expectedGrade && (
+                    <div className="text-center p-4 bg-muted/30 rounded-lg">
+                      <p className="text-sm text-muted-foreground">예상 등급</p>
+                      <p className="text-3xl font-bold text-primary">{selectedReport.report.expectedGrade}등급</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-12 text-muted-foreground">
+                  보고서 데이터를 불러올 수 없습니다.
+                </div>
+              )}
+            </div>
+            
+            <div className="p-4 border-t flex justify-end">
+              <Button type="button" variant="outline" onClick={() => { setShowReportModal(false); setSelectedReport(null); }}>
                 닫기
               </Button>
             </div>
