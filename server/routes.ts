@@ -1538,9 +1538,10 @@ export async function registerRoutes(
       for (const q of questionsData) {
         const domain = q.domain || q.topic || q.category || '독서';
         const qNum = q.questionNumber || q.number || (questionsData.indexOf(q) + 1);
-        const studentAnswer = studentAnswers[String(qNum)];
-        const isCorrect = studentAnswer === q.correctAnswer;
-        const qScore = q.score || 2;
+        const studentAnswer = Number(studentAnswers[String(qNum)]);
+        const correctAnswer = Number(q.correctAnswer);
+        const isCorrect = studentAnswer === correctAnswer;
+        const qScore = Number(q.score) || 2;
 
         if (!domainMap.has(domain)) {
           domainMap.set(domain, { name: domain, correct: 0, total: 0, earnedScore: 0, maxScore: 0 });
@@ -1568,16 +1569,22 @@ export async function registerRoutes(
       const sortedAttempts = completedAttempts.sort((a, b) => (b.score || 0) - (a.score || 0));
       const rank = sortedAttempts.findIndex(a => a.id === attemptId) + 1;
 
-      // Prepare wrong/correct questions analysis
+      // Prepare wrong/correct questions analysis (타입 변환 적용)
       const incorrectQuestions = questionsData.filter((q: any) => {
         const qNum = q.questionNumber || q.number;
-        return studentAnswers[String(qNum)] !== q.correctAnswer;
+        const studentAns = Number(studentAnswers[String(qNum)]);
+        const correctAns = Number(q.correctAnswer);
+        return studentAns !== correctAns;
       });
 
       const correctQuestions = questionsData.filter((q: any) => {
         const qNum = q.questionNumber || q.number;
-        return studentAnswers[String(qNum)] === q.correctAnswer;
+        const studentAns = Number(studentAnswers[String(qNum)]);
+        const correctAns = Number(q.correctAnswer);
+        return studentAns === correctAns;
       });
+      
+      console.log('[AI Report] Correct:', correctQuestions.length, 'Incorrect:', incorrectQuestions.length);
 
       // 학년별 프로그램 철학 (GitHub exact)
       const gradePhilosophy: { [key: string]: string } = {
