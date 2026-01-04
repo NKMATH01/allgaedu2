@@ -4,6 +4,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import session from "express-session";
 import pgSession from "connect-pg-simple";
+import MemoryStore from "memorystore";
 import { pool } from "./db";
 
 const app = express();
@@ -15,15 +16,30 @@ declare module "http" {
   }
 }
 
-// Session configuration with PostgreSQL store
+// Session configuration with PostgreSQL store (fallback to MemoryStore if DB unavailable)
 const PgStore = pgSession(session);
+const MemStore = MemoryStore(session);
+
+let sessionStore: session.Store;
+
+// Try to use PostgreSQL store, fallback to MemoryStore if connection fails
+try {
+  sessionStore = new PgStore({
+    pool: pool,
+    tableName: "session",
+    createTableIfMissing: true,
+  });
+  console.log("[session] Using PostgreSQL session store (Supabase)");
+} catch (error) {
+  console.warn("[session] PostgreSQL connection failed, using MemoryStore (sessions will be lost on restart)");
+  sessionStore = new MemStore({
+    checkPeriod: 86400000, // 24 hours
+  });
+}
+
 app.use(
   session({
-    store: new PgStore({
-      pool: pool,
-      tableName: "session",
-      createTableIfMissing: true,
-    }),
+    store: sessionStore,
     secret: process.env.SESSION_SECRET || "olga-academy-secret-key-2024",
     resave: false,
     saveUninitialized: false,
