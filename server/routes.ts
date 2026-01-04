@@ -337,7 +337,21 @@ export async function registerRoutes(
       const classList = await db.select().from(classes)
         .where(eq(classes.branchId, branchId))
         .orderBy(classes.createdAt);
-      res.json({ success: true, data: classList });
+      
+      // Get studentIds for each class
+      const classesWithStudents = await Promise.all(
+        classList.map(async (cls) => {
+          const classStudents = await db.select({ studentId: studentClasses.studentId })
+            .from(studentClasses)
+            .where(eq(studentClasses.classId, cls.id));
+          return {
+            ...cls,
+            studentIds: classStudents.map(cs => cs.studentId),
+          };
+        })
+      );
+      
+      res.json({ success: true, data: classesWithStudents });
     } catch (error) {
       console.error("Get classes error:", error);
       res.status(500).json({ message: "반 목록을 불러오는 중 오류가 발생했습니다." });
