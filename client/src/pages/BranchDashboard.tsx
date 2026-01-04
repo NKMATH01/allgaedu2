@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { 
   Users, GraduationCap, FileText, LogOut, ChevronDown, ChevronRight, 
   Plus, Trash2, Edit, Sparkles, Search, User, BookOpen, ClipboardList,
-  Save, RotateCcw, Check, X, AlertTriangle, BarChart3
+  Save, RotateCcw, Check, X, AlertTriangle, BarChart3, Download
 } from 'lucide-react';
 
 interface User {
@@ -1637,7 +1637,20 @@ export default function BranchDashboard({ user }: { user: User }) {
               )}
             </div>
             
-            <div className="p-4 border-t flex justify-end">
+            <div className="p-4 border-t flex justify-end gap-3">
+              <Button
+                type="button"
+                variant="default"
+                onClick={() => {
+                  if (selectedReport?.attemptId) {
+                    window.open(`/api/reports/${selectedReport.attemptId}/html`, '_blank');
+                  }
+                }}
+                data-testid="button-view-pdf"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                PDF 보기
+              </Button>
               <Button type="button" variant="outline" onClick={() => { setShowReportModal(false); setSelectedReport(null); }}>
                 닫기
               </Button>

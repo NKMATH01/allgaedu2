@@ -13,6 +13,7 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import OpenAI from "openai";
 import { OLGA_REPORT_META_PROMPT_V2 } from "./prompts/olga-report-meta-prompt-v2";
+import { generateReportHTML } from "./templates/newReportTemplate";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -1741,20 +1742,8 @@ ${JSON.stringify(userData, null, 2)}`;
       const recommendations = (aiAnalysisData.strengths || []).map((s: any) => s.analysisText || s);
       const expectedGrade = aiAnalysis.stats?.grade || attempt.grade;
 
-      // Create simplified HTML content for display
-      const htmlContent = `
-<div class="ai-report-v2">
-  <h2>${user.name} 학생 AI 분석 리포트</h2>
-  <div class="summary">
-    <h3>올가 분석 총평</h3>
-    <p>${summary}</p>
-  </div>
-  <div class="score-info">
-    <span>득점: ${attempt.score}/${attempt.maxScore}</span>
-    <span>등급: ${attempt.grade}등급</span>
-    <span>백분위: ${percentile}%</span>
-  </div>
-</div>`;
+      // Generate full 5-page A4 HTML report using GitHub template
+      const htmlContent = generateReportHTML(reportData);
 
       // Save report to database
       const [report] = await db.insert(aiReports).values({
@@ -1777,7 +1766,7 @@ ${JSON.stringify(userData, null, 2)}`;
     }
   });
 
-  // Get AI report
+  // Get AI report (JSON)
   app.get("/api/reports/:attemptId", requireAuth, async (req, res) => {
     try {
       const { attemptId } = req.params;
@@ -1790,6 +1779,36 @@ ${JSON.stringify(userData, null, 2)}`;
     } catch (error) {
       console.error("Get report error:", error);
       res.status(500).json({ message: "리포트를 불러오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Get AI report as HTML page (for PDF download)
+  app.get("/api/reports/:attemptId/html", requireAuth, async (req, res) => {
+    try {
+      const { attemptId } = req.params;
+      const [report] = await db.select().from(aiReports).where(eq(aiReports.attemptId, attemptId)).limit(1);
+      
+      if (!report) {
+        return res.status(404).send('<html><body><h1>리포트를 찾을 수 없습니다.</h1></body></html>');
+      }
+
+      // If htmlContent exists, serve it directly
+      if (report.htmlContent) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.send(report.htmlContent);
+      }
+
+      // Otherwise regenerate from analysis data
+      if (report.analysis) {
+        const htmlContent = generateReportHTML(report.analysis);
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.send(htmlContent);
+      }
+
+      res.status(404).send('<html><body><h1>리포트 데이터가 없습니다.</h1></body></html>');
+    } catch (error) {
+      console.error("Get report HTML error:", error);
+      res.status(500).send('<html><body><h1>리포트를 불러오는 중 오류가 발생했습니다.</h1></body></html>');
     }
   });
 
