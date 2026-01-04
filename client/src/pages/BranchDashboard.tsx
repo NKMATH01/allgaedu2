@@ -219,6 +219,19 @@ export default function BranchDashboard({ user }: { user: User }) {
     }
   };
 
+  const deleteReportMutation = useMutation({
+    mutationFn: async (attemptId: string) => {
+      const res = await api.delete(`/reports/${attemptId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      refetchDistributionStudents();
+      refetchAllDistributionStudents();
+      alert('보고서가 삭제되었습니다. 재분석할 수 있습니다.');
+    },
+    onError: (error: any) => { alert(error.response?.data?.message || '보고서 삭제에 실패했습니다.'); },
+  });
+
   const deleteDistributionMutation = useMutation({
     mutationFn: async (distributionId: string) => { const res = await api.delete(`/distributions/${distributionId}`); return res.data; },
     onSuccess: (data) => { 
@@ -731,13 +744,16 @@ export default function BranchDashboard({ user }: { user: User }) {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8"
-                                onClick={() => generateReportMutation.mutate(examData.attemptId)}
-                                disabled={generateReportMutation.isPending}
-                                title="보고서 재분석"
-                                data-testid={`button-regenerate-report-${examId}`}
+                                onClick={() => {
+                                  if (confirm('보고서를 삭제하고 재분석하시겠습니까?')) {
+                                    deleteReportMutation.mutate(examData.attemptId);
+                                  }
+                                }}
+                                disabled={deleteReportMutation.isPending}
+                                title="보고서 삭제"
+                                data-testid={`button-delete-report-${examId}`}
                               >
-                                <RotateCcw className="w-4 h-4" />
+                                <Trash2 className="w-4 h-4" />
                               </Button>
                             </div>
                           ) : (

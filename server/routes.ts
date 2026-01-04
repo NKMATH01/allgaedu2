@@ -1831,6 +1831,26 @@ ${JSON.stringify(userData, null, 2)}`;
     }
   });
 
+  // Delete AI report (for re-analysis)
+  app.delete("/api/reports/:attemptId", requireBranchManager, async (req, res) => {
+    try {
+      const { attemptId } = req.params;
+      
+      const [existingReport] = await db.select().from(aiReports).where(eq(aiReports.attemptId, attemptId)).limit(1);
+      if (!existingReport) {
+        return res.status(404).json({ message: "삭제할 보고서가 없습니다." });
+      }
+      
+      await db.delete(aiReports).where(eq(aiReports.attemptId, attemptId));
+      
+      console.log('[AI Report] Deleted report for attempt:', attemptId);
+      res.json({ success: true, message: "보고서가 삭제되었습니다. 다시 분석할 수 있습니다." });
+    } catch (error) {
+      console.error("Delete report error:", error);
+      res.status(500).json({ message: "보고서 삭제 중 오류가 발생했습니다." });
+    }
+  });
+
   // Get AI report as HTML page (for PDF download)
   app.get("/api/reports/:attemptId/html", requireAuth, async (req, res) => {
     try {
