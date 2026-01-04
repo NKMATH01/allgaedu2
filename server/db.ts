@@ -13,5 +13,9 @@ if (!databaseUrl) {
   );
 }
 
+// Log which database is being used (hide password)
+const urlForLog = databaseUrl.replace(/:[^:@]+@/, ':***@');
+console.log(`[db] Connecting to: ${urlForLog}`);
+
 export const pool = new Pool({ connectionString: databaseUrl });
 export const db = drizzle(pool, { schema });
