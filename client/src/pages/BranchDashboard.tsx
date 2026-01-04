@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { 
   Users, GraduationCap, FileText, LogOut, ChevronDown, ChevronRight, 
   Plus, Trash2, Edit, Sparkles, Search, User, BookOpen, ClipboardList,
-  Save, RotateCcw, Check, X
+  Save, RotateCcw, Check, X, AlertTriangle, BarChart3
 } from 'lucide-react';
 
 interface User {
@@ -1483,7 +1483,7 @@ export default function BranchDashboard({ user }: { user: User }) {
                     <Sparkles className="w-5 h-5 text-blue-600 dark:text-blue-300" />
                   </div>
                   <div>
-                    <h2 className="font-semibold text-lg">AI 분석 보고서</h2>
+                    <h2 className="font-semibold text-lg">AI 분석 보고서 (v2)</h2>
                     <p className="text-sm text-muted-foreground">{selectedReport.studentName} - {selectedReport.exam?.title}</p>
                   </div>
                 </div>
@@ -1495,96 +1495,142 @@ export default function BranchDashboard({ user }: { user: User }) {
             </div>
             
             <div className="flex-1 overflow-y-auto p-6">
-              {selectedReport.report ? (
-                <div className="space-y-6">
-                  <div>
-                    <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
-                      <BookOpen className="w-5 h-5" />
-                      성적 요약
-                    </h3>
-                    <Card>
-                      <CardContent className="p-4">
-                        <p className="text-muted-foreground">{selectedReport.report.summary || selectedReport.report.analysis?.summary}</p>
-                      </CardContent>
-                    </Card>
+              {selectedReport.report ? (() => {
+                const report = selectedReport.report;
+                const analysisData = report.analysis || {};
+                const isV2 = report.metaVersion === 'v2';
+                const summary = analysisData.olgaSummary || report.summary || analysisData.summary;
+                const subjectDetails = analysisData.subjectDetails || [];
+                const strengths = analysisData.strengths || [];
+                const weaknesses = analysisData.weaknesses || [];
+                const propensity = analysisData.propensity;
+                const scoreSummary = report.scoreSummary;
+                
+                return (
+                  <div className="space-y-6">
+                    {scoreSummary && (
+                      <div className="grid grid-cols-4 gap-3 p-4 bg-muted/30 rounded-lg">
+                        <div className="text-center">
+                          <p className="text-xs text-muted-foreground">등급</p>
+                          <p className="text-2xl font-bold text-primary">{scoreSummary.grade}등급</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-muted-foreground">원점수</p>
+                          <p className="text-xl font-semibold">{scoreSummary.rawScore}/{scoreSummary.rawScoreMax}</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-muted-foreground">표준점수</p>
+                          <p className="text-xl font-semibold">{scoreSummary.standardScore}</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-muted-foreground">백분위</p>
+                          <p className="text-xl font-semibold">{scoreSummary.percentile}%</p>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {summary && (
+                      <div>
+                        <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+                          <BookOpen className="w-5 h-5" />
+                          올가 분석 총평
+                        </h3>
+                        <Card>
+                          <CardContent className="p-4">
+                            <p className="text-muted-foreground whitespace-pre-wrap">{summary}</p>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    )}
+                    
+                    {subjectDetails.length > 0 && (
+                      <div>
+                        <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+                          <BarChart3 className="w-5 h-5" />
+                          영역별 상세 분석
+                        </h3>
+                        <div className="grid grid-cols-1 gap-3">
+                          {subjectDetails.map((subject: any, i: number) => (
+                            <Card key={i} className={`border-l-4 ${
+                              subject.statusColor === 'blue' ? 'border-l-blue-500' :
+                              subject.statusColor === 'green' ? 'border-l-green-500' :
+                              subject.statusColor === 'orange' ? 'border-l-orange-500' : 'border-l-red-500'
+                            }`}>
+                              <CardContent className="p-4">
+                                <div className="flex justify-between items-center mb-2">
+                                  <span className="font-semibold">{subject.name}</span>
+                                  <Badge variant={subject.score >= 70 ? "default" : "secondary"}>{subject.score}%</Badge>
+                                </div>
+                                <p className="text-xs text-muted-foreground mb-2">{subject.scoreText}</p>
+                                <p className="text-sm">{subject.analysisText}</p>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {strengths.length > 0 && (
+                      <div>
+                        <h3 className="font-semibold text-lg mb-2 text-green-600 flex items-center gap-2">
+                          <Check className="w-5 h-5" />
+                          강점 영역
+                        </h3>
+                        <div className="grid grid-cols-1 gap-2">
+                          {strengths.map((s: any, i: number) => (
+                            <Card key={i} className="border-green-200 dark:border-green-800">
+                              <CardContent className="p-3">
+                                <div className="flex justify-between items-center mb-1">
+                                  <span className="font-medium text-green-700 dark:text-green-300">{s.name}</span>
+                                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">{s.score}%</Badge>
+                                </div>
+                                <p className="text-sm text-muted-foreground">{s.analysisText}</p>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {weaknesses.length > 0 && (
+                      <div>
+                        <h3 className="font-semibold text-lg mb-2 text-red-600 flex items-center gap-2">
+                          <AlertTriangle className="w-5 h-5" />
+                          취약 영역
+                        </h3>
+                        <div className="grid grid-cols-1 gap-2">
+                          {weaknesses.map((w: any, i: number) => (
+                            <Card key={i} className="border-red-200 dark:border-red-800">
+                              <CardContent className="p-3">
+                                <div className="flex justify-between items-center mb-1">
+                                  <span className="font-medium text-red-700 dark:text-red-300">{w.name}</span>
+                                  <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">{w.score}%</Badge>
+                                </div>
+                                <p className="text-sm text-muted-foreground">{w.analysisText}</p>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {propensity && propensity.typeTitle && (
+                      <div>
+                        <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+                          <User className="w-5 h-5" />
+                          학습 성향 분석
+                        </h3>
+                        <Card className="bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-950 dark:to-purple-950">
+                          <CardContent className="p-4">
+                            <p className="font-bold text-lg text-indigo-700 dark:text-indigo-300 mb-2">{propensity.typeTitle}</p>
+                            <p className="text-muted-foreground">{propensity.typeDescription}</p>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    )}
                   </div>
-                  
-                  {(selectedReport.report.weakAreas?.length > 0 || selectedReport.report.analysis?.weakAreas?.length > 0) && (
-                    <div>
-                      <h3 className="font-semibold text-lg mb-2 text-red-600 flex items-center gap-2">
-                        <X className="w-5 h-5" />
-                        취약 영역
-                      </h3>
-                      <Card>
-                        <CardContent className="p-4">
-                          <ul className="list-disc list-inside space-y-1">
-                            {(selectedReport.report.weakAreas || selectedReport.report.analysis?.weakAreas || []).map((area: string, i: number) => (
-                              <li key={i} className="text-muted-foreground">{area}</li>
-                            ))}
-                          </ul>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  )}
-                  
-                  {(selectedReport.report.analysis?.strengths?.length > 0) && (
-                    <div>
-                      <h3 className="font-semibold text-lg mb-2 text-green-600 flex items-center gap-2">
-                        <Check className="w-5 h-5" />
-                        강점
-                      </h3>
-                      <Card>
-                        <CardContent className="p-4">
-                          <ul className="list-disc list-inside space-y-1">
-                            {selectedReport.report.analysis.strengths.map((s: string, i: number) => (
-                              <li key={i} className="text-muted-foreground">{s}</li>
-                            ))}
-                          </ul>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  )}
-                  
-                  {(selectedReport.report.recommendations?.length > 0 || selectedReport.report.analysis?.recommendations?.length > 0) && (
-                    <div>
-                      <h3 className="font-semibold text-lg mb-2 text-blue-600 flex items-center gap-2">
-                        <Sparkles className="w-5 h-5" />
-                        학습 추천
-                      </h3>
-                      <Card>
-                        <CardContent className="p-4">
-                          <ul className="list-decimal list-inside space-y-2">
-                            {(selectedReport.report.recommendations || selectedReport.report.analysis?.recommendations || []).map((rec: string, i: number) => (
-                              <li key={i} className="text-muted-foreground">{rec}</li>
-                            ))}
-                          </ul>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  )}
-                  
-                  {selectedReport.report.analysis?.studyPlan && (
-                    <div>
-                      <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
-                        <GraduationCap className="w-5 h-5" />
-                        학습 계획
-                      </h3>
-                      <Card>
-                        <CardContent className="p-4">
-                          <p className="text-muted-foreground whitespace-pre-wrap">{selectedReport.report.analysis.studyPlan}</p>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  )}
-                  
-                  {selectedReport.report.expectedGrade && (
-                    <div className="text-center p-4 bg-muted/30 rounded-lg">
-                      <p className="text-sm text-muted-foreground">예상 등급</p>
-                      <p className="text-3xl font-bold text-primary">{selectedReport.report.expectedGrade}등급</p>
-                    </div>
-                  )}
-                </div>
-              ) : (
+                );
+              })() : (
                 <div className="text-center py-12 text-muted-foreground">
                   보고서 데이터를 불러올 수 없습니다.
                 </div>

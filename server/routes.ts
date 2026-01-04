@@ -12,6 +12,7 @@ import { requireAuth, requireAdmin, requireBranchManager, requireStudent, requir
 import multer from "multer";
 import * as XLSX from "xlsx";
 import OpenAI from "openai";
+import { OLGA_REPORT_META_PROMPT_V2 } from "./prompts/olga-report-meta-prompt-v2";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -1489,10 +1490,16 @@ export async function registerRoutes(
 
   // ============ AI REPORT ROUTES ============
 
-  // Generate AI report for attempt
+  // Generate AI report for attempt (GitHub exact implementation with OLGA Meta Prompt v2)
   app.post("/api/reports/generate/:attemptId", requireBranchManager, async (req, res) => {
     try {
       const { attemptId } = req.params;
+
+      // Check if report already exists
+      const [existingReport] = await db.select().from(aiReports).where(eq(aiReports.attemptId, attemptId)).limit(1);
+      if (existingReport) {
+        return res.json(existingReport);
+      }
 
       // Get attempt with exam and student data
       const [attemptData] = await db.select({
@@ -1516,95 +1523,253 @@ export async function registerRoutes(
       const questionsData = exam.questionsData as any[];
       const studentAnswers = attempt.answers as Record<string, number>;
 
-      // Analyze wrong answers
-      const wrongAnswers = questionsData.filter(q => 
-        studentAnswers[String(q.questionNumber)] !== q.correctAnswer
-      );
+      // Calculate domain stats (영역별 성적 분석)
+      const domainMap = new Map<string, { name: string; correct: number; total: number; earnedScore: number; maxScore: number }>();
+      
+      for (const q of questionsData) {
+        const domain = q.domain || q.topic || q.category || '독서';
+        const qNum = q.questionNumber || q.number || (questionsData.indexOf(q) + 1);
+        const studentAnswer = studentAnswers[String(qNum)];
+        const isCorrect = studentAnswer === q.correctAnswer;
+        const qScore = q.score || 2;
 
-      // Generate AI analysis
-      const prompt = `
-한국 수능/학력평가 분석 전문가로서 학생의 시험 결과를 분석해주세요.
+        if (!domainMap.has(domain)) {
+          domainMap.set(domain, { name: domain, correct: 0, total: 0, earnedScore: 0, maxScore: 0 });
+        }
 
-학생 정보:
-- 이름: ${user.name}
-- 학년: ${student.grade || "고등학생"}
+        const domainData = domainMap.get(domain)!;
+        domainData.total++;
+        domainData.maxScore += qScore;
+        if (isCorrect) {
+          domainData.correct++;
+          domainData.earnedScore += qScore;
+        }
+      }
 
-시험 정보:
-- 시험명: ${exam.title}
-- 과목: ${exam.subject}
-- 총 문항수: ${exam.totalQuestions}
-- 총점: ${exam.totalScore}
+      const domainStats = Array.from(domainMap.values()).map(d => ({
+        ...d,
+        percentage: d.total > 0 ? Math.round((d.correct / d.total) * 100) : 0,
+      }));
 
-학생 성적:
-- 득점: ${attempt.score}/${attempt.maxScore}
-- 정답률: ${((attempt.correctCount || 0) / exam.totalQuestions * 100).toFixed(1)}%
-- 등급: ${attempt.grade}등급
+      // Get all completed attempts for ranking
+      const allAttempts = await db.select().from(examAttempts).where(eq(examAttempts.examId, attempt.examId));
+      const completedAttempts = allAttempts.filter(a => a.score !== null && a.submittedAt !== null);
+      const sortedAttempts = completedAttempts.sort((a, b) => (b.score || 0) - (a.score || 0));
+      const rank = sortedAttempts.findIndex(a => a.id === attemptId) + 1;
 
-틀린 문제 분석:
-${wrongAnswers.map(q => `- ${q.questionNumber}번: 정답 ${q.correctAnswer}번, 학생답안 ${studentAnswers[String(q.questionNumber)] || "무응답"} (단원: ${q.topic}, 개념: ${q.concept}, 난이도: ${q.difficulty})`).join("\n")}
+      // Prepare wrong/correct questions analysis
+      const incorrectQuestions = questionsData.filter((q: any) => {
+        const qNum = q.questionNumber || q.number;
+        return studentAnswers[String(qNum)] !== q.correctAnswer;
+      });
 
-다음 형식으로 JSON 응답해주세요:
-{
-  "summary": "전체 성적 요약 (2-3문장)",
-  "weakAreas": ["취약 단원/개념 목록"],
-  "recommendations": ["구체적인 학습 추천 사항 (3-5개)"],
-  "expectedGrade": "다음 시험 예상 등급 (1-9)",
-  "analysis": {
-    "strengths": ["잘한 점"],
-    "improvements": ["개선 필요 사항"],
-    "studyPlan": "추천 학습 계획"
-  }
-}`;
+      const correctQuestions = questionsData.filter((q: any) => {
+        const qNum = q.questionNumber || q.number;
+        return studentAnswers[String(qNum)] === q.correctAnswer;
+      });
 
+      // 학년별 프로그램 철학 (GitHub exact)
+      const gradePhilosophy: { [key: string]: string } = {
+        '중1': '올가의 중1 프로그램은 국어의 기초 개념을 튼튼히 다지는 데 중점을 둡니다.',
+        '중2': '올가의 중2 프로그램은 독해력과 문법의 심화 학습에 집중합니다.',
+        '중3': '올가의 중3 프로그램은 고등 국어로의 전환을 준비하며 실전 독해를 강화합니다.',
+        '고1': '올가의 고1 프로그램은 수능 국어의 기본 체계를 구축하는 데 집중합니다.',
+        '고2': '올가의 고2 프로그램은 수능 독서 지문 분석과 문학 감상 능력을 고도화합니다.',
+        '고3': '올가의 고3 프로그램은 수능 최적화 전략과 킬러 문항 대응력을 완성합니다.',
+      };
+      const philosophy = gradePhilosophy[student.grade || ''] || '올가의 프로그램은 학생의 실력 향상에 집중합니다.';
+
+      // Build userData for AI (GitHub exact structure)
+      const userData = {
+        studentAnswer: {
+          학생명: user.name,
+          학년: student.grade || '고등학생',
+          시험명: exam.title,
+          원점수: attempt.score,
+          만점: attempt.maxScore,
+          정답률: Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100),
+          등급: attempt.grade,
+          순위: `${rank}/${completedAttempts.length}`,
+          프로그램철학: philosophy,
+          영역별성취도: domainStats.map(d => ({
+            영역: d.name,
+            취득점수: d.earnedScore,
+            만점: d.maxScore,
+            정답수: d.correct,
+            전체문항: d.total,
+            정답률: d.percentage
+          }))
+        },
+        masterCsv: {
+          틀린문항: incorrectQuestions.map((q: any) => {
+            const qNum = q.questionNumber || q.number;
+            return {
+              문항번호: qNum,
+              영역: q.domain || q.topic || '미분류',
+              난이도: q.difficulty || '중',
+              유형: q.typeAnalysis || q.type || '미분류',
+              소분류: q.subcategory || q.concept || '미분류',
+              정답: q.correctAnswer,
+              학생답안: studentAnswers[String(qNum)] || '무응답'
+            };
+          }),
+          맞은문항: correctQuestions.map((q: any) => {
+            const qNum = q.questionNumber || q.number;
+            return {
+              문항번호: qNum,
+              영역: q.domain || q.topic || '미분류',
+              난이도: q.difficulty || '중',
+              유형: q.typeAnalysis || q.type || '미분류',
+              소분류: q.subcategory || q.concept || '미분류'
+            };
+          })
+        },
+        average: {
+          응시학생수: completedAttempts.length,
+          영역별평균: domainStats.map(d => ({
+            영역: d.name,
+            평균점수: Math.round(d.maxScore * 0.65),
+            평균정답률: 65
+          }))
+        }
+      };
+
+      // Combine System Prompt + User Data (GitHub exact approach)
+      const prompt = `${OLGA_REPORT_META_PROMPT_V2}
+
+[입력 데이터]
+${JSON.stringify(userData, null, 2)}`;
+
+      console.log('[AI Report] Generating report for:', user.name, 'Attempt:', attemptId);
+
+      // Call OpenAI API (adapted from Gemini)
       const completion = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
-          { role: "system", content: "당신은 한국 교육 전문가입니다. 학생들의 시험 결과를 분석하고 맞춤형 학습 조언을 제공합니다." },
+          { role: "system", content: "당신은 올가교육 수능연구소의 데이터 분석 팀장입니다. 반드시 JSON 형식으로만 응답하세요." },
           { role: "user", content: prompt }
         ],
         response_format: { type: "json_object" },
-        max_completion_tokens: 2000,
+        max_tokens: 4000,
+        temperature: 0.7,
       });
 
-      const analysisText = completion.choices[0]?.message?.content || "{}";
-      const analysis = JSON.parse(analysisText);
+      const responseText = completion.choices[0]?.message?.content || "{}";
+      let aiAnalysis: any = {};
+      
+      try {
+        let cleanedText = responseText.trim();
+        if (cleanedText.startsWith('```json')) {
+          cleanedText = cleanedText.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
+        } else if (cleanedText.startsWith('```')) {
+          cleanedText = cleanedText.replace(/^```\s*/, '').replace(/\s*```$/, '');
+        }
+        aiAnalysis = JSON.parse(cleanedText);
+        
+        if (aiAnalysis.metaVersion === 'v2') {
+          console.log('[AI Report] Meta Prompt v2 응답 확인');
+        }
+      } catch (parseError) {
+        console.error('[AI Report] JSON 파싱 오류:', parseError);
+        aiAnalysis = { olgaSummary: responseText, metaVersion: 'fallback' };
+      }
 
-      // Create HTML report
+      // Calculate percentile and standard score
+      const percentile = completedAttempts.length > 0 
+        ? Math.round(100 * (1 - (rank / completedAttempts.length)) * 10) / 10 
+        : 50;
+      
+      const gradeValue = attempt.grade || 5;
+      const standardScore = gradeValue <= 2 
+        ? 80 + (attempt.score || 0) / (attempt.maxScore || 100) * 20 
+        : gradeValue <= 4 
+          ? 70 + (attempt.score || 0) / (attempt.maxScore || 100) * 10 
+          : Math.round(60 + (attempt.score || 0) / (attempt.maxScore || 100) * 10);
+
+      // Build complete report data (GitHub exact structure)
+      const aiStats = aiAnalysis.stats || {};
+      const aiAnalysisData = aiAnalysis.analysis || {};
+
+      const reportData = {
+        metaVersion: aiAnalysis.metaVersion || 'v2',
+        studentInfo: {
+          name: user.name,
+          school: student.school || '미지정',
+          date: attempt.submittedAt ? new Date(attempt.submittedAt).toLocaleDateString('ko-KR') : new Date().toLocaleDateString('ko-KR'),
+          level: student.grade || '미지정',
+        },
+        scoreSummary: {
+          grade: attempt.grade,
+          rawScore: attempt.score,
+          rawScoreMax: attempt.maxScore,
+          standardScore: Math.round(standardScore),
+          percentile: percentile,
+        },
+        charts: {
+          radarChartData: aiStats.domainChartData || {
+            student: domainStats.map(d => d.percentage),
+            average: domainStats.map(() => 65),
+          },
+          predictionChartData: [
+            Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100),
+            Math.min(Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100) + 5, 100),
+            Math.min(Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100) + 10, 100),
+            Math.min(Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100) + 15, 100),
+          ],
+        },
+        analysis: {
+          olgaSummary: aiAnalysisData.olgaSummary || `${user.name} 학생의 성적 분석 결과입니다.`,
+          subjectDetails: aiAnalysisData.subjectDetails || domainStats.map((d: any) => ({
+            name: d.name,
+            score: d.percentage,
+            scoreText: `취득 ${d.earnedScore}점 / 만점 ${d.maxScore}점 (${d.correct}/${d.total}문항 정답)`,
+            statusColor: d.percentage >= 80 ? 'blue' : d.percentage >= 70 ? 'green' : d.percentage >= 60 ? 'orange' : 'red',
+            analysisText: `${d.name} 영역에서 ${d.percentage}%의 정답률을 기록했습니다.`,
+          })),
+          strengths: aiAnalysisData.strengths || [],
+          weaknesses: aiAnalysisData.weaknesses || [],
+          propensity: aiAnalysisData.propensity || {
+            typeTitle: '분석 중',
+            typeDescription: '성향 분석 데이터가 생성 중입니다.',
+          },
+        },
+      };
+
+      // Extract legacy format fields for database
+      const summary = aiAnalysisData.olgaSummary || reportData.analysis.olgaSummary;
+      const weakAreas = (aiAnalysisData.weaknesses || []).map((w: any) => w.name || w);
+      const recommendations = (aiAnalysisData.strengths || []).map((s: any) => s.analysisText || s);
+      const expectedGrade = aiAnalysis.stats?.grade || attempt.grade;
+
+      // Create simplified HTML content for display
       const htmlContent = `
-<div class="ai-report">
-  <h2>${user.name} 학생 성적 분석 리포트</h2>
+<div class="ai-report-v2">
+  <h2>${user.name} 학생 AI 분석 리포트</h2>
   <div class="summary">
-    <h3>성적 요약</h3>
-    <p>${analysis.summary}</p>
-    <div class="grade-info">
-      <span>득점: ${attempt.score}/${attempt.maxScore}</span>
-      <span>등급: ${attempt.grade}등급</span>
-      <span>예상 등급: ${analysis.expectedGrade}등급</span>
-    </div>
+    <h3>올가 분석 총평</h3>
+    <p>${summary}</p>
   </div>
-  <div class="weak-areas">
-    <h3>취약 영역</h3>
-    <ul>${(analysis.weakAreas || []).map((a: string) => `<li>${a}</li>`).join("")}</ul>
-  </div>
-  <div class="recommendations">
-    <h3>학습 추천</h3>
-    <ul>${(analysis.recommendations || []).map((r: string) => `<li>${r}</li>`).join("")}</ul>
+  <div class="score-info">
+    <span>득점: ${attempt.score}/${attempt.maxScore}</span>
+    <span>등급: ${attempt.grade}등급</span>
+    <span>백분위: ${percentile}%</span>
   </div>
 </div>`;
 
-      // Save report
+      // Save report to database
       const [report] = await db.insert(aiReports).values({
         attemptId,
         studentId: student.id,
         examId: exam.id,
-        analysis,
-        weakAreas: analysis.weakAreas,
-        recommendations: analysis.recommendations,
-        expectedGrade: parseInt(analysis.expectedGrade) || attempt.grade,
-        summary: analysis.summary,
+        analysis: reportData,
+        weakAreas,
+        recommendations,
+        expectedGrade: typeof expectedGrade === 'number' ? expectedGrade : attempt.grade,
+        summary,
         htmlContent,
       }).returning();
 
+      console.log('[AI Report] Generated successfully for:', user.name);
       res.json(report);
     } catch (error) {
       console.error("Generate report error:", error);
