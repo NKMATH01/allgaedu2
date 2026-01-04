@@ -530,7 +530,7 @@ export default function BranchDashboard({ user }: { user: User }) {
   };
 
   const renderMisudeungContent = () => {
-    const studentExamData = selectedStudent ? getStudentExamData(selectedStudent.student?.id) : [];
+    const studentExamData = selectedStudent ? getStudentExamData(selectedStudent.id) : [];
     const submittedExams = studentExamData.filter((e: any) => e.isSubmitted || e.submittedAt);
     const examsWithReports = studentExamData.filter((e: any) => e.hasReport);
 
@@ -545,7 +545,7 @@ export default function BranchDashboard({ user }: { user: User }) {
                 </div>
                 <div>
                   <h2 className="text-lg font-semibold">{selectedStudent.user?.name}</h2>
-                  <p className="text-sm text-muted-foreground">{selectedStudent.student?.grade} | {selectedStudent.student?.school}</p>
+                  <p className="text-sm text-muted-foreground">{selectedStudent.grade} | {selectedStudent.school}</p>
                 </div>
               </div>
             </div>
@@ -605,7 +605,7 @@ export default function BranchDashboard({ user }: { user: User }) {
                                 onClick={() => {
                                   setSelectedAttempt({
                                     ...examData,
-                                    studentId: selectedStudent.student?.id,
+                                    studentId: selectedStudent.id,
                                     distributionId: examData.distribution?.id,
                                   });
                                   setSelectedDistribution(examData.distribution);
