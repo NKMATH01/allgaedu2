@@ -1527,6 +1527,11 @@ export async function registerRoutes(
       const questionsData = exam.questionsData as any[];
       const studentAnswers = attempt.answers as Record<string, number>;
 
+      console.log('[AI Report] Student:', user.name);
+      console.log('[AI Report] Questions count:', questionsData?.length);
+      console.log('[AI Report] Student answers:', JSON.stringify(studentAnswers));
+      console.log('[AI Report] Sample question:', JSON.stringify(questionsData?.[0]));
+
       // Calculate domain stats (영역별 성적 분석)
       const domainMap = new Map<string, { name: string; correct: number; total: number; earnedScore: number; maxScore: number }>();
       
@@ -1554,6 +1559,8 @@ export async function registerRoutes(
         ...d,
         percentage: d.total > 0 ? Math.round((d.correct / d.total) * 100) : 0,
       }));
+
+      console.log('[AI Report] Domain stats:', JSON.stringify(domainStats, null, 2));
 
       // Get all completed attempts for ranking
       const allAttempts = await db.select().from(examAttempts).where(eq(examAttempts.examId, attempt.examId));
