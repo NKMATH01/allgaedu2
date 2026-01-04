@@ -1646,10 +1646,10 @@ ${JSON.stringify(userData, null, 2)}`;
 
       console.log('[AI Report] Generating report for:', user.name, 'Attempt:', attemptId);
 
-      // Call Google Gemini API
+      // Call Google Gemini API with retry logic
       const genAI = getGeminiClient();
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.0-flash",
+        model: "gemini-2.0-flash-lite",
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.7,
@@ -1657,18 +1657,44 @@ ${JSON.stringify(userData, null, 2)}`;
         }
       });
 
-      const result = await model.generateContent({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }]
+      // Retry logic with exponential backoff
+      let result: any = null;
+      let lastError: any = null;
+      const maxRetries = 3;
+      
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          if (attempt > 0) {
+            const delay = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s
+            console.log(`[AI Report] Retrying in ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, delay));
           }
-        ],
-        systemInstruction: {
-          role: "model",
-          parts: [{ text: "당신은 올가교육 수능연구소의 데이터 분석 팀장입니다. 반드시 JSON 형식으로만 응답하세요." }]
+          
+          result = await model.generateContent({
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: prompt }]
+              }
+            ],
+            systemInstruction: {
+              role: "model",
+              parts: [{ text: "당신은 올가교육 수능연구소의 데이터 분석 팀장입니다. 반드시 JSON 형식으로만 응답하세요." }]
+            }
+          });
+          break; // Success, exit retry loop
+        } catch (retryError: any) {
+          lastError = retryError;
+          console.log(`[AI Report] Attempt ${attempt + 1} failed:`, retryError?.status || retryError?.message);
+          if (retryError?.status !== 429 && retryError?.statusText !== 'Too Many Requests') {
+            throw retryError; // Non-rate-limit error, don't retry
+          }
         }
-      });
+      }
+      
+      if (!result) {
+        throw lastError || new Error('AI 생성 실패');
+      }
 
       const responseText = result.response.text() || "{}";
       let aiAnalysis: any = {};
