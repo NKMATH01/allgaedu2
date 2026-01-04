@@ -95,10 +95,15 @@
 
 ## 환경 변수
 
-- `DATABASE_URL` - PostgreSQL 연결 URL
+- `SUPABASE_DATABASE_URL` - Supabase PostgreSQL 연결 URL (우선 사용)
+- `DATABASE_URL` - PostgreSQL 연결 URL (폴백)
 - `SESSION_SECRET` - 세션 암호화 키
 - `AI_INTEGRATIONS_OPENAI_API_KEY` - OpenAI API 키 (자동 설정)
 - `AI_INTEGRATIONS_OPENAI_BASE_URL` - OpenAI 기본 URL (자동 설정)
+
+## 사용자 선호사항
+
+- **데이터베이스**: Supabase 전용 사용 (Replit 내장 DB 사용 안함)
 
 ## 개발 명령어
 
