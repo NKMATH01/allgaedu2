@@ -1649,7 +1649,7 @@ ${JSON.stringify(userData, null, 2)}`;
       // Call Google Gemini API with retry logic
       const genAI = getGeminiClient();
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.0-flash-lite",
+        model: "gemini-2.5-flash",
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.7,
