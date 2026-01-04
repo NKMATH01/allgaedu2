@@ -35,7 +35,7 @@ export default function BranchDashboard({ user }: { user: User }) {
   const [sortMode, setSortMode] = useState<'grade' | 'class'>('grade');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedGrades, setExpandedGrades] = useState<Record<string, boolean>>({});
-  const [studentTab, setStudentTab] = useState<'exams' | 'results' | 'reports'>('exams');
+  const [editingScore, setEditingScore] = useState<string | null>(null);
   
   const [showStudentModal, setShowStudentModal] = useState(false);
   const [showClassModal, setShowClassModal] = useState(false);
@@ -549,10 +549,17 @@ export default function BranchDashboard({ user }: { user: User }) {
     return results;
   };
 
+  const formatExamDate = (dateString: string | null) => {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    const yy = String(date.getFullYear()).slice(-2);
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yy}.${mm}.${dd}`;
+  };
+
   const renderMisudeungContent = () => {
     const studentExamData = selectedStudent ? getStudentExamData(selectedStudent.id) : [];
-    const submittedExams = studentExamData.filter((e: any) => e.isSubmitted || e.submittedAt);
-    const examsWithReports = studentExamData.filter((e: any) => e.hasReport);
 
     return (
       <main className="flex-1 overflow-auto p-6" data-testid="content-misudeung">
@@ -570,172 +577,153 @@ export default function BranchDashboard({ user }: { user: User }) {
               </div>
             </div>
             
-            <div className="border-b mb-6">
-              <nav className="flex gap-6">
-                <div
-                  className={`pb-3 text-sm font-medium border-b-2 cursor-pointer ${studentTab === 'exams' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => setStudentTab('exams')}
-                  role="button"
-                  tabIndex={0}
-                  data-testid="tab-exams"
-                >
-                  배포된 시험지
-                </div>
-                <div
-                  className={`pb-3 text-sm font-medium border-b-2 cursor-pointer ${studentTab === 'results' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => setStudentTab('results')}
-                  role="button"
-                  tabIndex={0}
-                  data-testid="tab-results"
-                >
-                  시험결과
-                </div>
-                <div
-                  className={`pb-3 text-sm font-medium border-b-2 cursor-pointer ${studentTab === 'reports' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => setStudentTab('reports')}
-                  role="button"
-                  tabIndex={0}
-                  data-testid="tab-reports"
-                >
-                  보고서
-                </div>
-              </nav>
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <ClipboardList className="w-5 h-5" />
+                시험 ({studentExamData.length}개)
+              </h3>
             </div>
             
-            {studentTab === 'exams' && (
-              <div>
-                <h3 className="text-lg font-semibold mb-4">배포된 시험지 ({studentExamData.length}개)</h3>
-                {studentExamData.length > 0 ? (
-                  <div className="space-y-3">
-                    {studentExamData.map((examData: any) => (
-                      <Card key={examData.distribution?.id} className="hover-elevate">
-                        <CardContent className="p-4 flex items-center justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-medium truncate">{examData.exam?.title || '시험'}</h4>
-                            <p className="text-sm text-muted-foreground">
-                              {examData.exam?.subject} | {examData.exam?.totalQuestions}문항
-                            </p>
+            {studentExamData.length > 0 ? (
+              <div className="border rounded-lg overflow-hidden">
+                <div className="bg-muted/50 px-4 py-3 border-b grid grid-cols-12 gap-4 text-sm font-medium text-muted-foreground">
+                  <div className="col-span-1 text-center">학년</div>
+                  <div className="col-span-5">시험명</div>
+                  <div className="col-span-2 text-center">날짜</div>
+                  <div className="col-span-2 text-center">채점</div>
+                  <div className="col-span-2 text-center">보고서</div>
+                </div>
+                
+                <div className="divide-y">
+                  {studentExamData.map((examData: any) => {
+                    const isGraded = examData.isSubmitted || examData.submittedAt;
+                    const hasReport = examData.hasReport;
+                    const examId = examData.distribution?.id || examData.attemptId;
+                    const examDate = examData.distribution?.createdAt || examData.exam?.createdAt;
+                    
+                    return (
+                      <div 
+                        key={examId} 
+                        className="px-4 py-3 grid grid-cols-12 gap-4 items-center hover:bg-muted/30 transition-colors"
+                        data-testid={`row-exam-${examId}`}
+                      >
+                        <div className="col-span-1 text-center">
+                          <Badge variant="outline" className="text-xs">
+                            {selectedStudent.grade?.replace(/[^가-힣0-9]/g, '').slice(0, 2) || '-'}
+                          </Badge>
+                        </div>
+                        
+                        <div className="col-span-5">
+                          <div className="font-medium text-sm truncate">{examData.exam?.title || '시험'}</div>
+                          <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                            <span>{examData.exam?.totalQuestions}문제</span>
+                            {examData.exam?.subject && (
+                              <>
+                                <span className="text-muted-foreground/50">|</span>
+                                <span>{examData.exam.subject}</span>
+                              </>
+                            )}
                           </div>
-                          <div className="flex items-center gap-2">
-                            {examData.isSubmitted || examData.submittedAt ? (
-                              <Badge variant="secondary">응시 완료</Badge>
-                            ) : (
+                        </div>
+                        
+                        <div className="col-span-2 text-center text-sm text-muted-foreground">
+                          {formatExamDate(examDate)}
+                        </div>
+                        
+                        <div className="col-span-2 text-center">
+                          {isGraded ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="font-semibold text-primary"
+                              onClick={() => {
+                                setSelectedAttempt({
+                                  ...examData,
+                                  studentId: selectedStudent.id,
+                                  distributionId: examData.distribution?.id,
+                                });
+                                setSelectedDistribution(examData.distribution);
+                                setShowAnswerModal(true);
+                              }}
+                              data-testid={`button-score-${examId}`}
+                            >
+                              {examData.score}점
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedAttempt({
+                                  ...examData,
+                                  studentId: selectedStudent.id,
+                                  distributionId: examData.distribution?.id,
+                                });
+                                setSelectedDistribution(examData.distribution);
+                                setShowAnswerModal(true);
+                              }}
+                              data-testid={`button-grade-${examId}`}
+                            >
+                              채점전
+                            </Button>
+                          )}
+                        </div>
+                        
+                        <div className="col-span-2 text-center">
+                          {!isGraded ? (
+                            <span className="text-xs text-muted-foreground">-</span>
+                          ) : hasReport ? (
+                            <div className="flex items-center justify-center gap-1">
                               <Button
+                                variant="outline"
                                 size="sm"
                                 onClick={() => {
-                                  setSelectedAttempt({
+                                  setSelectedReport({
                                     ...examData,
-                                    studentId: selectedStudent.id,
-                                    distributionId: examData.distribution?.id,
+                                    studentName: selectedStudent.user?.name,
                                   });
-                                  setSelectedDistribution(examData.distribution);
-                                  setShowAnswerModal(true);
+                                  setShowReportModal(true);
                                 }}
+                                data-testid={`button-view-report-${examId}`}
                               >
-                                답안 입력
+                                보고서 보기
                               </Button>
-                            )}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                ) : (
-                  <Card>
-                    <CardContent className="p-8 text-center text-muted-foreground">
-                      배포된 시험이 없습니다.
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            )}
-
-            {studentTab === 'results' && (
-              <div>
-                <h3 className="text-lg font-semibold mb-4">시험결과 ({submittedExams.length}개)</h3>
-                {submittedExams.length > 0 ? (
-                  <div className="space-y-3">
-                    {submittedExams.map((examData: any) => (
-                      <Card key={examData.distribution?.id} className="hover-elevate">
-                        <CardContent className="p-4 flex items-center justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-medium truncate">{examData.exam?.title || '시험'}</h4>
-                            <p className="text-sm text-muted-foreground">
-                              {examData.exam?.subject}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary">{examData.score}/{examData.maxScore}점</Badge>
-                            <Badge>{examData.grade}등급</Badge>
-                            {!examData.hasReport && (
                               <Button
-                                size="sm"
-                                variant="outline"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
                                 onClick={() => generateReportMutation.mutate(examData.attemptId)}
                                 disabled={generateReportMutation.isPending}
+                                title="보고서 재분석"
+                                data-testid={`button-regenerate-report-${examId}`}
                               >
-                                <Sparkles className="w-4 h-4 mr-1" />
-                                AI 분석
+                                <RotateCcw className="w-4 h-4" />
                               </Button>
-                            )}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                ) : (
-                  <Card>
-                    <CardContent className="p-8 text-center text-muted-foreground">
-                      아직 응시한 시험이 없습니다.
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            )}
-
-            {studentTab === 'reports' && (
-              <div>
-                <h3 className="text-lg font-semibold mb-4">AI 분석 보고서 ({examsWithReports.length}개)</h3>
-                {examsWithReports.length > 0 ? (
-                  <div className="space-y-3">
-                    {examsWithReports.map((examData: any) => (
-                      <Card key={examData.distribution?.id} className="hover-elevate">
-                        <CardContent className="p-4 flex items-center justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-medium truncate">{examData.exam?.title || '시험'}</h4>
-                            <p className="text-sm text-muted-foreground">
-                              {examData.score}/{examData.maxScore}점 ({examData.grade}등급)
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="default">분석 완료</Badge>
-                            <Button 
-                              size="sm" 
-                              variant="outline"
-                              onClick={() => {
-                                setSelectedReport({
-                                  ...examData,
-                                  studentName: selectedStudent.user?.name,
-                                });
-                                setShowReportModal(true);
-                              }}
-                              data-testid={`button-view-report-${examData.distribution?.id}`}
+                            </div>
+                          ) : (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={() => generateReportMutation.mutate(examData.attemptId)}
+                              disabled={generateReportMutation.isPending}
+                              data-testid={`button-create-report-${examId}`}
                             >
-                              보고서 보기
+                              <Sparkles className="w-4 h-4 mr-1" />
+                              보고서 만들기
                             </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                ) : (
-                  <Card>
-                    <CardContent className="p-8 text-center text-muted-foreground">
-                      생성된 AI 분석 보고서가 없습니다.
-                    </CardContent>
-                  </Card>
-                )}
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
+            ) : (
+              <Card>
+                <CardContent className="p-8 text-center text-muted-foreground">
+                  배포된 시험이 없습니다.
+                </CardContent>
+              </Card>
             )}
           </div>
         ) : (
