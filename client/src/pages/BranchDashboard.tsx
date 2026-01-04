@@ -49,6 +49,7 @@ export default function BranchDashboard({ user }: { user: User }) {
   const [redistributeType, setRedistributeType] = useState<'class' | 'student'>('class');
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [expandedDistributeGrades, setExpandedDistributeGrades] = useState<Record<string, boolean>>({});
 
   const { data: students, refetch: refetchStudents } = useQuery({
     queryKey: ['students', user.branchId],
@@ -1199,24 +1200,81 @@ export default function BranchDashboard({ user }: { user: User }) {
                 ) : (
                   <div>
                     <label className="text-sm font-medium">학생 선택</label>
-                    <div className="border rounded-md p-2 max-h-48 overflow-y-auto space-y-1">
-                      {students?.map((s: any) => (
-                        <label key={s.id} className="flex items-center gap-2 p-1 hover:bg-muted rounded cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={selectedStudentIds.includes(s.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setSelectedStudentIds([...selectedStudentIds, s.id]);
-                              } else {
-                                setSelectedStudentIds(selectedStudentIds.filter(id => id !== s.id));
-                              }
-                            }}
-                          />
-                          <span className="text-sm">{s.user?.name} ({s.grade})</span>
-                        </label>
-                      ))}
+                    <div className="border rounded-md p-2 max-h-64 overflow-y-auto space-y-1">
+                      {(() => {
+                        const gradeOrder = ['초1', '초2', '초3', '초4', '초5', '초6', '중1', '중2', '중3', '고1', '고2', '고3'];
+                        const grouped: Record<string, any[]> = {};
+                        students?.forEach((s: any) => {
+                          const grade = s.grade || '미지정';
+                          if (!grouped[grade]) grouped[grade] = [];
+                          grouped[grade].push(s);
+                        });
+                        const sortedGrades = gradeOrder.filter(g => grouped[g]);
+                        if (grouped['미지정']) sortedGrades.push('미지정');
+                        
+                        return sortedGrades.map(grade => {
+                          const gradeStudents = grouped[grade] || [];
+                          const allSelected = gradeStudents.every((s: any) => selectedStudentIds.includes(s.id));
+                          const someSelected = gradeStudents.some((s: any) => selectedStudentIds.includes(s.id));
+                          const isExpanded = expandedDistributeGrades[grade];
+                          
+                          return (
+                            <div key={grade} className="border-b last:border-b-0 pb-1">
+                              <div
+                                className="flex items-center gap-2 p-1 hover:bg-muted rounded cursor-pointer"
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => setExpandedDistributeGrades(prev => ({ ...prev, [grade]: !prev[grade] }))}
+                                onKeyDown={(e) => e.key === 'Enter' && setExpandedDistributeGrades(prev => ({ ...prev, [grade]: !prev[grade] }))}
+                              >
+                                {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                <input
+                                  type="checkbox"
+                                  checked={allSelected}
+                                  ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    const gradeIds = gradeStudents.map((s: any) => s.id);
+                                    if (e.target.checked) {
+                                      setSelectedStudentIds(Array.from(new Set([...selectedStudentIds, ...gradeIds])));
+                                    } else {
+                                      setSelectedStudentIds(selectedStudentIds.filter(id => !gradeIds.includes(id)));
+                                    }
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                                <span className="text-sm font-medium">{grade}</span>
+                                <Badge variant="secondary" className="text-xs ml-auto">{gradeStudents.length}명</Badge>
+                              </div>
+                              
+                              {isExpanded && (
+                                <div className="ml-6 space-y-0.5">
+                                  {gradeStudents.map((s: any) => (
+                                    <label key={s.id} className="flex items-center gap-2 p-1 hover:bg-muted rounded cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedStudentIds.includes(s.id)}
+                                        onChange={(e) => {
+                                          if (e.target.checked) {
+                                            setSelectedStudentIds([...selectedStudentIds, s.id]);
+                                          } else {
+                                            setSelectedStudentIds(selectedStudentIds.filter(id => id !== s.id));
+                                          }
+                                        }}
+                                      />
+                                      <span className="text-sm">{s.user?.name}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        });
+                      })()}
                     </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      선택됨: {selectedStudentIds.length}명
+                    </p>
                   </div>
                 )}
                 
