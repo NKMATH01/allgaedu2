@@ -9,7 +9,8 @@ import { ScrollArea } from '../components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { 
   Users, GraduationCap, FileText, LogOut, ChevronDown, ChevronRight, 
-  Plus, Trash2, Edit, Sparkles, Search, User, BookOpen, ClipboardList
+  Plus, Trash2, Edit, Sparkles, Search, User, BookOpen, ClipboardList,
+  Save, RotateCcw, Check, X
 } from 'lucide-react';
 
 interface User {
@@ -50,6 +51,7 @@ export default function BranchDashboard({ user }: { user: User }) {
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [expandedDistributeGrades, setExpandedDistributeGrades] = useState<Record<string, boolean>>({});
+  const [answerStates, setAnswerStates] = useState<Record<number, 'correct' | 'wrong' | null>>({});
 
   const { data: students, refetch: refetchStudents } = useQuery({
     queryKey: ['students', user.branchId],
@@ -165,18 +167,18 @@ export default function BranchDashboard({ user }: { user: User }) {
   });
 
   const gradeAttemptMutation = useMutation({
-    mutationFn: async ({ attemptId, answers }: { attemptId: string; answers: any }) => {
-      const res = await api.put(`/exam-attempts/${attemptId}/branch-grade`, { answers });
+    mutationFn: async ({ attemptId, gradingData }: { attemptId: string; gradingData: any }) => {
+      const res = await api.put(`/exam-attempts/${attemptId}/branch-grade`, { gradingData });
       return res.data;
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['distribution-students'] });
       await queryClient.invalidateQueries({ queryKey: ['all-distribution-students'] });
       refetchDistributionStudents(); refetchAllDistributionStudents();
-      setShowAnswerModal(false); setSelectedAttempt(null);
-      alert('답안이 저장되었습니다.');
+      setShowAnswerModal(false); setSelectedAttempt(null); setAnswerStates({});
+      alert('채점 결과가 저장되었습니다.');
     },
-    onError: (error: any) => { alert(error.response?.data?.message || '답안 저장에 실패했습니다.'); },
+    onError: (error: any) => { alert(error.response?.data?.message || '채점 저장에 실패했습니다.'); },
   });
 
   const generateReportMutation = useMutation({
@@ -291,30 +293,46 @@ export default function BranchDashboard({ user }: { user: User }) {
     redistributeMutation.mutate({ id: selectedDistribution.id, data });
   };
 
-  const handleAnswerSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
+  const handleAnswerSubmit = () => {
     let totalQuestions = 30;
-    if (distributionStudents?.exam?.totalQuestions) {
+    if (selectedAttempt?.exam?.totalQuestions) {
+      totalQuestions = selectedAttempt.exam.totalQuestions;
+    } else if (distributionStudents?.exam?.totalQuestions) {
       totalQuestions = distributionStudents.exam.totalQuestions;
     } else if (selectedAttempt?.distributionId && allDistributionStudents) {
       const distData = allDistributionStudents.find((d: any) => d.distribution.id === selectedAttempt.distributionId);
       if (distData?.exam?.totalQuestions) totalQuestions = distData.exam.totalQuestions;
     }
-    const answers: any = {};
-    for (let i = 1; i <= totalQuestions; i++) {
-      const value = formData.get(`q${i}`);
-      if (value !== null && value !== '') answers[i] = parseInt(value.toString());
+    
+    const correctAnswers = Object.entries(answerStates)
+      .filter(([_, v]) => v === 'correct')
+      .map(([k, _]) => parseInt(k));
+    const wrongAnswers = Object.entries(answerStates)
+      .filter(([_, v]) => v === 'wrong')
+      .map(([k, _]) => parseInt(k));
+    
+    if (correctAnswers.length === 0 && wrongAnswers.length === 0) { 
+      alert('최소 1개 이상의 답안을 입력해주세요.'); 
+      return; 
     }
-    if (Object.keys(answers).length === 0) { alert('최소 1개 이상의 답안을 입력해주세요.'); return; }
+    
+    const gradingData = {
+      correctQuestions: correctAnswers,
+      wrongQuestions: wrongAnswers,
+      totalQuestions,
+    };
+    
     if (selectedAttempt.attemptId) {
-      gradeAttemptMutation.mutate({ attemptId: selectedAttempt.attemptId, answers });
+      gradeAttemptMutation.mutate({ attemptId: selectedAttempt.attemptId, gradingData });
     } else {
-      if (!selectedAttempt.studentId || !selectedAttempt.distributionId) { alert('학생 정보가 올바르지 않습니다.'); return; }
+      if (!selectedAttempt.studentId || !selectedAttempt.distributionId) { 
+        alert('학생 정보가 올바르지 않습니다.'); 
+        return; 
+      }
       createAttemptMutation.mutate({ studentId: selectedAttempt.studentId, distributionId: selectedAttempt.distributionId }, {
         onSuccess: (data) => {
           const newAttemptId = data.data?.id || data.id;
-          if (newAttemptId) gradeAttemptMutation.mutate({ attemptId: newAttemptId, answers });
+          if (newAttemptId) gradeAttemptMutation.mutate({ attemptId: newAttemptId, gradingData });
           else alert('답안지 생성은 성공했으나 ID를 찾을 수 없습니다.');
         },
       });
@@ -1294,52 +1312,150 @@ export default function BranchDashboard({ user }: { user: User }) {
       
       {showAnswerModal && selectedAttempt && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="modal-answer">
-          <Card className="w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
-            <CardHeader>
-              <CardTitle>답안 입력: {selectedAttempt.studentName}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleAnswerSubmit} className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  각 문항의 답안을 입력하세요. (1~5 중 선택)
-                </p>
-                
-                <div className="grid grid-cols-5 gap-2">
-                  {Array.from({ length: distributionStudents?.exam?.totalQuestions || 30 }).map((_, i) => {
-                    const qNum = i + 1;
-                    const existingAnswer = selectedAttempt.answers?.[qNum];
-                    return (
-                      <div key={qNum} className="flex items-center gap-1">
-                        <span className="text-sm w-8">{qNum}.</span>
-                        <Input
-                          name={`q${qNum}`}
-                          type="number"
-                          min={1}
-                          max={5}
-                          defaultValue={existingAnswer || ''}
-                          className="w-12 text-center"
-                          data-testid={`input-answer-${qNum}`}
-                        />
-                      </div>
-                    );
-                  })}
+          <Card className="w-full max-w-3xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-950 dark:to-pink-950 p-4 border-b flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900 flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-purple-600 dark:text-purple-300" />
                 </div>
-                
-                <div className="flex gap-2 pt-4">
-                  <Button type="button" variant="outline" className="flex-1" onClick={() => { setShowAnswerModal(false); setSelectedAttempt(null); }}>
-                    취소
-                  </Button>
-                  <Button 
-                    type="submit" 
-                    className="flex-1" 
-                    disabled={gradeAttemptMutation.isPending || createAttemptMutation.isPending}
-                    data-testid="button-submit-answer"
+                <div>
+                  <h2 className="font-semibold text-lg">강사 전용 채점 시스템</h2>
+                  <p className="text-sm text-muted-foreground">{selectedAttempt.exam?.title || '시험'}</p>
+                </div>
+              </div>
+              <Button 
+                onClick={handleAnswerSubmit}
+                disabled={gradeAttemptMutation.isPending || createAttemptMutation.isPending}
+                className="bg-purple-600 hover:bg-purple-700 text-white"
+                data-testid="button-submit-answer"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                채점 결과 저장
+              </Button>
+            </div>
+            
+            <div className="p-4 border-b bg-muted/30">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+                    onClick={() => {
+                      const totalQ = selectedAttempt.exam?.totalQuestions || distributionStudents?.exam?.totalQuestions || 30;
+                      const newAnswers: Record<number, 'correct' | 'wrong' | null> = {};
+                      for (let i = 1; i <= totalQ; i++) newAnswers[i] = 'correct';
+                      setAnswerStates(newAnswers);
+                    }}
+                    data-testid="button-mark-all-correct"
                   >
-                    저장
+                    <Check className="w-4 h-4 mr-1" />
+                    전체 정답 처리
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                    onClick={() => {
+                      const totalQ = selectedAttempt.exam?.totalQuestions || distributionStudents?.exam?.totalQuestions || 30;
+                      const newAnswers: Record<number, 'correct' | 'wrong' | null> = {};
+                      for (let i = 1; i <= totalQ; i++) newAnswers[i] = 'wrong';
+                      setAnswerStates(newAnswers);
+                    }}
+                    data-testid="button-mark-all-wrong"
+                  >
+                    <X className="w-4 h-4 mr-1" />
+                    전체 오답 처리
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAnswerStates({})}
+                    data-testid="button-reset-answers"
+                  >
+                    <RotateCcw className="w-4 h-4 mr-1" />
+                    선택 초기화
                   </Button>
                 </div>
-              </form>
-            </CardContent>
+                
+                <div className="flex items-center gap-4 text-sm">
+                  <div className="text-center">
+                    <div className="text-xs text-muted-foreground">정답</div>
+                    <div className="font-bold text-green-600">{Object.values(answerStates).filter(v => v === 'correct').length}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-muted-foreground">오답</div>
+                    <div className="font-bold text-red-600">{Object.values(answerStates).filter(v => v === 'wrong').length}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-muted-foreground">미입력</div>
+                    <div className="font-bold text-muted-foreground">
+                      {(selectedAttempt.exam?.totalQuestions || distributionStudents?.exam?.totalQuestions || 30) - Object.values(answerStates).filter(v => v !== null).length}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="space-y-2">
+                {Array.from({ length: selectedAttempt.exam?.totalQuestions || distributionStudents?.exam?.totalQuestions || 30 }).map((_, i) => {
+                  const qNum = i + 1;
+                  const state = answerStates[qNum];
+                  return (
+                    <div
+                      key={qNum}
+                      className={`flex items-center gap-4 p-3 rounded-xl border-2 transition-colors ${
+                        state === 'correct' 
+                          ? 'border-green-400 bg-green-50/50 dark:bg-green-950/30' 
+                          : state === 'wrong' 
+                          ? 'border-red-400 bg-red-50/50 dark:bg-red-950/30' 
+                          : 'border-muted bg-background'
+                      }`}
+                      data-testid={`answer-row-${qNum}`}
+                    >
+                      <span className="text-lg font-medium w-8 text-center">{qNum}</span>
+                      <div className="flex-1" />
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setAnswerStates(prev => ({ ...prev, [qNum]: prev[qNum] === 'correct' ? null : 'correct' }))}
+                          className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
+                            state === 'correct'
+                              ? 'bg-green-500 text-white'
+                              : 'bg-muted/50 text-muted-foreground hover:bg-green-100 dark:hover:bg-green-900'
+                          }`}
+                          data-testid={`button-correct-${qNum}`}
+                        >
+                          <Check className="w-5 h-5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAnswerStates(prev => ({ ...prev, [qNum]: prev[qNum] === 'wrong' ? null : 'wrong' }))}
+                          className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
+                            state === 'wrong'
+                              ? 'bg-red-500 text-white'
+                              : 'bg-muted/50 text-muted-foreground hover:bg-red-100 dark:hover:bg-red-900'
+                          }`}
+                          data-testid={`button-wrong-${qNum}`}
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            
+            <div className="p-4 border-t flex justify-end">
+              <Button type="button" variant="outline" onClick={() => { setShowAnswerModal(false); setSelectedAttempt(null); setAnswerStates({}); }}>
+                닫기
+              </Button>
+            </div>
           </Card>
         </div>
       )}

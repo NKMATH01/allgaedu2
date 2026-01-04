@@ -1314,7 +1314,7 @@ export async function registerRoutes(
   app.put("/api/exam-attempts/:attemptId/branch-grade", requireBranchManager, async (req, res) => {
     try {
       const { attemptId } = req.params;
-      const { answers } = req.body;
+      const { gradingData, answers: legacyAnswers } = req.body;
 
       // Get attempt
       const [attempt] = await db.select().from(examAttempts)
@@ -1332,13 +1332,61 @@ export async function registerRoutes(
         return res.status(404).json({ success: false, message: "시험을 찾을 수 없습니다." });
       }
 
-      // Grade the exam
-      const gradeResult = gradeExam(answers, exam.questionsData as any[]);
+      let gradeResult;
+      let answersToSave: any = {};
+
+      if (gradingData) {
+        // New grading format: correctQuestions, wrongQuestions
+        const { correctQuestions, wrongQuestions, totalQuestions } = gradingData;
+        const questionsData = exam.questionsData as any[];
+        
+        // Calculate score based on correct/wrong marking
+        let score = 0;
+        let maxScore = 0;
+        const correctCount = correctQuestions.length;
+        
+        questionsData.forEach((q: any) => {
+          const points = q.points || q.배점 || 2;
+          maxScore += points;
+          if (correctQuestions.includes(q.questionNumber || q.문항번호)) {
+            score += points;
+          }
+        });
+
+        // If no questionsData matching, use simple calculation
+        if (maxScore === 0) {
+          maxScore = totalQuestions * 2;
+          score = correctCount * 2;
+        }
+
+        const percentage = (score / maxScore) * 100;
+        let grade = 9;
+        if (percentage >= 96) grade = 1;
+        else if (percentage >= 89) grade = 2;
+        else if (percentage >= 77) grade = 3;
+        else if (percentage >= 60) grade = 4;
+        else if (percentage >= 40) grade = 5;
+        else if (percentage >= 23) grade = 6;
+        else if (percentage >= 11) grade = 7;
+        else if (percentage >= 4) grade = 8;
+
+        gradeResult = { score, maxScore, correctCount, grade };
+
+        // Save correct/wrong info in answers field
+        correctQuestions.forEach((qNum: number) => { answersToSave[qNum] = 'correct'; });
+        wrongQuestions.forEach((qNum: number) => { answersToSave[qNum] = 'wrong'; });
+      } else if (legacyAnswers) {
+        // Legacy format: numbered answers
+        gradeResult = gradeExam(legacyAnswers, exam.questionsData as any[]);
+        answersToSave = legacyAnswers;
+      } else {
+        return res.status(400).json({ success: false, message: "채점 데이터가 없습니다." });
+      }
 
       // Update attempt
       const [updated] = await db.update(examAttempts)
         .set({
-          answers,
+          answers: answersToSave,
           score: gradeResult.score,
           maxScore: gradeResult.maxScore,
           correctCount: gradeResult.correctCount,
@@ -1352,11 +1400,11 @@ export async function registerRoutes(
       res.json({ 
         success: true, 
         data: updated,
-        message: "답안이 저장되었습니다."
+        message: "채점 결과가 저장되었습니다."
       });
     } catch (error) {
       console.error("Branch grade attempt error:", error);
-      res.status(500).json({ success: false, message: "답안 저장 중 오류가 발생했습니다." });
+      res.status(500).json({ success: false, message: "채점 저장 중 오류가 발생했습니다." });
     }
   });
 
