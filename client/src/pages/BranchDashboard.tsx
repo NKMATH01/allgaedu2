@@ -31,10 +31,10 @@ export default function BranchDashboard({ user }: { user: User }) {
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [selectedDistribution, setSelectedDistribution] = useState<any>(null);
   
-  const [gradeFilter, setGradeFilter] = useState<string>('all');
-  const [classFilter, setClassFilter] = useState<string>('all');
+  const [sortMode, setSortMode] = useState<'grade' | 'class'>('grade');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedGrades, setExpandedGrades] = useState<Record<string, boolean>>({});
+  const [studentTab, setStudentTab] = useState<'exams' | 'results' | 'reports'>('exams');
   
   const [showStudentModal, setShowStudentModal] = useState(false);
   const [showClassModal, setShowClassModal] = useState(false);
@@ -194,7 +194,13 @@ export default function BranchDashboard({ user }: { user: User }) {
     onError: (error: any) => { alert(error.response?.data?.message || '배포 삭제에 실패했습니다.'); },
   });
 
-  const studentsGroupedByGrade = useMemo(() => {
+  const getClassName = (studentId: string) => {
+    if (!classes) return null;
+    const cls = classes.find((c: any) => c.studentIds?.includes(studentId));
+    return cls?.name || null;
+  };
+
+  const studentsGrouped = useMemo(() => {
     if (!students) return {};
     
     let filtered = students;
@@ -206,32 +212,30 @@ export default function BranchDashboard({ user }: { user: User }) {
       );
     }
     
-    if (classFilter !== 'all') {
-      const classData = classes?.find((c: any) => c.id === classFilter);
-      if (classData?.studentIds && Array.isArray(classData.studentIds)) {
-        filtered = filtered.filter((s: any) => classData.studentIds.includes(s.student?.id));
-      }
-    }
-    
-    if (gradeFilter !== 'all') {
-      filtered = filtered.filter((s: any) => s.student?.grade === gradeFilter);
-    }
-    
     const grouped: Record<string, any[]> = {};
-    filtered.forEach((s: any) => {
-      const grade = s.student?.grade || '미지정';
-      if (!grouped[grade]) grouped[grade] = [];
-      grouped[grade].push(s);
-    });
     
-    const sortedGrades = ['초1', '초2', '초3', '초4', '초5', '초6', '중1', '중2', '중3', '고1', '고2', '고3', '미지정'];
-    const sorted: Record<string, any[]> = {};
-    sortedGrades.forEach(g => {
-      if (grouped[g]) sorted[g] = grouped[g];
-    });
-    
-    return sorted;
-  }, [students, searchQuery, classFilter, gradeFilter, classes]);
+    if (sortMode === 'grade') {
+      filtered.forEach((s: any) => {
+        const grade = s.student?.grade || '미지정';
+        if (!grouped[grade]) grouped[grade] = [];
+        grouped[grade].push(s);
+      });
+      
+      const sortedGrades = ['초1', '초2', '초3', '초4', '초5', '초6', '중1', '중2', '중3', '고1', '고2', '고3', '미지정'];
+      const sorted: Record<string, any[]> = {};
+      sortedGrades.forEach(g => {
+        if (grouped[g]) sorted[g] = grouped[g];
+      });
+      return sorted;
+    } else {
+      filtered.forEach((s: any) => {
+        const className = getClassName(s.student?.id) || '미배정';
+        if (!grouped[className]) grouped[className] = [];
+        grouped[className].push(s);
+      });
+      return grouped;
+    }
+  }, [students, searchQuery, sortMode, classes]);
 
   const toggleGradeExpand = (grade: string) => {
     setExpandedGrades(prev => ({ ...prev, [grade]: !prev[grade] }));
@@ -316,12 +320,6 @@ export default function BranchDashboard({ user }: { user: User }) {
     }
   };
 
-  const getClassName = (studentId: string) => {
-    if (!classes) return null;
-    const cls = classes.find((c: any) => c.studentIds?.includes(studentId));
-    return cls?.name || null;
-  };
-
   const renderTopNav = () => (
     <header className="h-14 border-b bg-background flex items-center justify-between px-4 sticky top-0 z-50" data-testid="header-branch">
       <div className="flex items-center gap-6">
@@ -373,28 +371,24 @@ export default function BranchDashboard({ user }: { user: User }) {
         )}
         
         <div className="flex gap-2">
-          <Select value={gradeFilter} onValueChange={setGradeFilter}>
-            <SelectTrigger className="flex-1" data-testid="select-grade-filter">
-              <SelectValue placeholder="학년" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">전체 학년</SelectItem>
-              {['초1', '초2', '초3', '초4', '초5', '초6', '중1', '중2', '중3', '고1', '고2', '고3'].map(g => (
-                <SelectItem key={g} value={g}>{g}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={classFilter} onValueChange={setClassFilter}>
-            <SelectTrigger className="flex-1" data-testid="select-class-filter">
-              <SelectValue placeholder="반" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">전체 반</SelectItem>
-              {classes?.map((c: any) => (
-                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Button
+            variant={sortMode === 'grade' ? 'default' : 'outline'}
+            size="sm"
+            className="flex-1"
+            onClick={() => setSortMode('grade')}
+            data-testid="button-sort-grade"
+          >
+            학년
+          </Button>
+          <Button
+            variant={sortMode === 'class' ? 'default' : 'outline'}
+            size="sm"
+            className="flex-1"
+            onClick={() => setSortMode('class')}
+            data-testid="button-sort-class"
+          >
+            반
+          </Button>
         </div>
         
         <div className="relative">
@@ -408,36 +402,31 @@ export default function BranchDashboard({ user }: { user: User }) {
           />
         </div>
         
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" className="w-3 h-3" />
-            <span>전체 열기</span>
-          </label>
-          <span className="text-xs">|</span>
-          <span>등록학생</span>
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <span>등록학생 {students?.length || 0}명</span>
         </div>
       </div>
       
       <ScrollArea className="flex-1">
         <div className="p-2">
-          {Object.entries(studentsGroupedByGrade).map(([grade, studentsList]) => (
-            <div key={grade} className="mb-1">
+          {Object.entries(studentsGrouped).map(([groupKey, studentsList]) => (
+            <div key={groupKey} className="mb-1">
               <div
                 className="w-full flex items-center justify-between p-2 hover-elevate rounded-md text-sm cursor-pointer"
-                onClick={() => toggleGradeExpand(grade)}
+                onClick={() => toggleGradeExpand(groupKey)}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => e.key === 'Enter' && toggleGradeExpand(grade)}
-                data-testid={`button-toggle-grade-${grade}`}
+                onKeyDown={(e) => e.key === 'Enter' && toggleGradeExpand(groupKey)}
+                data-testid={`button-toggle-group-${groupKey}`}
               >
                 <div className="flex items-center gap-2">
-                  {expandedGrades[grade] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                  <span className="font-medium">{grade}</span>
+                  {expandedGrades[groupKey] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  <span className="font-medium">{groupKey}</span>
                 </div>
                 <Badge variant="secondary" className="text-xs">{studentsList.length}명</Badge>
               </div>
               
-              {expandedGrades[grade] && (
+              {expandedGrades[groupKey] && (
                 <div className="ml-4 space-y-0.5">
                   {studentsList.map((s: any) => {
                     const clsName = getClassName(s.student?.id);
@@ -466,7 +455,7 @@ export default function BranchDashboard({ user }: { user: User }) {
             </div>
           ))}
           
-          {Object.keys(studentsGroupedByGrade).length === 0 && (
+          {Object.keys(studentsGrouped).length === 0 && (
             <div className="text-center text-muted-foreground py-8 text-sm">
               등록된 학생이 없습니다.
             </div>
@@ -474,33 +463,6 @@ export default function BranchDashboard({ user }: { user: User }) {
         </div>
       </ScrollArea>
       
-      <div className="p-2 border-t">
-        <div className="flex items-center justify-between text-sm text-muted-foreground px-2">
-          <span>전체 {students?.length || 0}명</span>
-          <span>출결</span>
-        </div>
-        {students?.slice(0, 5).map((s: any) => {
-          const clsName = getClassName(s.student?.id);
-          return (
-            <div
-              key={s.student?.id}
-              className={`w-full flex items-center justify-between p-2 rounded-md text-sm hover-elevate cursor-pointer ${
-                selectedStudent?.student?.id === s.student?.id ? 'bg-primary/10 text-primary font-medium' : ''
-              }`}
-              onClick={() => setSelectedStudent(s)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => e.key === 'Enter' && setSelectedStudent(s)}
-            >
-              <span className="truncate">
-                {clsName && <span className="text-muted-foreground">{clsName}_</span>}
-                {s.user?.name}
-              </span>
-              <Badge variant="outline" className="text-xs">출석</Badge>
-            </div>
-          );
-        })}
-      </div>
     </aside>
   );
 
@@ -550,125 +512,211 @@ export default function BranchDashboard({ user }: { user: User }) {
     </aside>
   );
 
-  const renderMisudeungContent = () => (
-    <main className="flex-1 overflow-auto p-6" data-testid="content-misudeung">
-      {selectedStudent ? (
-        <div>
-          <div className="flex items-center gap-4 mb-6">
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
-                <User className="w-5 h-5" />
-              </div>
-              <div>
-                <h2 className="text-lg font-semibold">{selectedStudent.user?.name}</h2>
-                <p className="text-sm text-muted-foreground">{selectedStudent.student?.grade} | {selectedStudent.student?.school}</p>
+  const getStudentExamData = (studentId: string) => {
+    if (!allDistributionStudents) return [];
+    const results: any[] = [];
+    allDistributionStudents.forEach((d: any) => {
+      const studentData = d.students?.find((s: any) => s.studentId === studentId);
+      if (studentData) {
+        results.push({
+          ...studentData,
+          distribution: d.distribution,
+          exam: d.exam,
+        });
+      }
+    });
+    return results;
+  };
+
+  const renderMisudeungContent = () => {
+    const studentExamData = selectedStudent ? getStudentExamData(selectedStudent.student?.id) : [];
+    const submittedExams = studentExamData.filter((e: any) => e.isSubmitted || e.submittedAt);
+    const examsWithReports = studentExamData.filter((e: any) => e.hasReport);
+
+    return (
+      <main className="flex-1 overflow-auto p-6" data-testid="content-misudeung">
+        {selectedStudent ? (
+          <div>
+            <div className="flex items-center gap-4 mb-6">
+              <div className="flex items-center gap-2">
+                <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                  <User className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold">{selectedStudent.user?.name}</h2>
+                  <p className="text-sm text-muted-foreground">{selectedStudent.student?.grade} | {selectedStudent.student?.school}</p>
+                </div>
               </div>
             </div>
-          </div>
-          
-          <div className="border-b mb-6">
-            <nav className="flex gap-6">
-              {['학습내역', '유형분석', '학습지', '교재', '보고서'].map((tab, i) => (
+            
+            <div className="border-b mb-6">
+              <nav className="flex gap-6">
                 <div
-                  key={tab}
-                  className={`pb-3 text-sm font-medium border-b-2 cursor-pointer ${i === 0 ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                  className={`pb-3 text-sm font-medium border-b-2 cursor-pointer ${studentTab === 'exams' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setStudentTab('exams')}
                   role="button"
                   tabIndex={0}
+                  data-testid="tab-exams"
                 >
-                  {tab}
+                  배포된 시험지
                 </div>
-              ))}
-            </nav>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-6 mb-8">
-            <Card>
-              <CardContent className="p-4">
-                <div className="text-sm text-muted-foreground mb-1">배포된 시험</div>
-                <div className="text-2xl font-bold">{distributions?.length || 0}개</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="text-sm text-muted-foreground mb-1">응시 완료</div>
-                <div className="text-2xl font-bold">0개</div>
-              </CardContent>
-            </Card>
-          </div>
-          
-          <h3 className="text-lg font-semibold mb-4">시험 목록</h3>
-          {distributions?.length > 0 ? (
-            <div className="space-y-3">
-              {distributions.map((dist: any) => {
-                const distStudents = allDistributionStudents?.find((d: any) => d.distribution.id === dist.id);
-                const studentData = distStudents?.students?.find((s: any) => s.studentId === selectedStudent.student?.id);
-                
-                return (
-                  <Card key={dist.id} className="hover-elevate">
-                    <CardContent className="p-4 flex items-center justify-between">
-                      <div>
-                        <h4 className="font-medium">{dist.exam?.title || '시험'}</h4>
-                        <p className="text-sm text-muted-foreground">
-                          {dist.exam?.subject} | {dist.exam?.grade}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {studentData?.isSubmitted ? (
-                          <>
-                            <Badge variant="secondary">{studentData.score}/{studentData.maxScore}점</Badge>
-                            <Badge>{studentData.grade}등급</Badge>
-                            {!studentData.hasReport && (
+                <div
+                  className={`pb-3 text-sm font-medium border-b-2 cursor-pointer ${studentTab === 'results' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setStudentTab('results')}
+                  role="button"
+                  tabIndex={0}
+                  data-testid="tab-results"
+                >
+                  시험결과
+                </div>
+                <div
+                  className={`pb-3 text-sm font-medium border-b-2 cursor-pointer ${studentTab === 'reports' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setStudentTab('reports')}
+                  role="button"
+                  tabIndex={0}
+                  data-testid="tab-reports"
+                >
+                  보고서
+                </div>
+              </nav>
+            </div>
+            
+            {studentTab === 'exams' && (
+              <div>
+                <h3 className="text-lg font-semibold mb-4">배포된 시험지 ({studentExamData.length}개)</h3>
+                {studentExamData.length > 0 ? (
+                  <div className="space-y-3">
+                    {studentExamData.map((examData: any) => (
+                      <Card key={examData.distribution?.id} className="hover-elevate">
+                        <CardContent className="p-4 flex items-center justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-medium truncate">{examData.exam?.title || '시험'}</h4>
+                            <p className="text-sm text-muted-foreground">
+                              {examData.exam?.subject} | {examData.exam?.totalQuestions}문항
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {examData.isSubmitted || examData.submittedAt ? (
+                              <Badge variant="secondary">응시 완료</Badge>
+                            ) : (
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedAttempt({
+                                    ...examData,
+                                    studentId: selectedStudent.student?.id,
+                                    distributionId: examData.distribution?.id,
+                                  });
+                                  setSelectedDistribution(examData.distribution);
+                                  setShowAnswerModal(true);
+                                }}
+                              >
+                                답안 입력
+                              </Button>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <Card>
+                    <CardContent className="p-8 text-center text-muted-foreground">
+                      배포된 시험이 없습니다.
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
+
+            {studentTab === 'results' && (
+              <div>
+                <h3 className="text-lg font-semibold mb-4">시험결과 ({submittedExams.length}개)</h3>
+                {submittedExams.length > 0 ? (
+                  <div className="space-y-3">
+                    {submittedExams.map((examData: any) => (
+                      <Card key={examData.distribution?.id} className="hover-elevate">
+                        <CardContent className="p-4 flex items-center justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-medium truncate">{examData.exam?.title || '시험'}</h4>
+                            <p className="text-sm text-muted-foreground">
+                              {examData.exam?.subject}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="secondary">{examData.score}/{examData.maxScore}점</Badge>
+                            <Badge>{examData.grade}등급</Badge>
+                            {!examData.hasReport && (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => generateReportMutation.mutate(studentData.attemptId)}
+                                onClick={() => generateReportMutation.mutate(examData.attemptId)}
                                 disabled={generateReportMutation.isPending}
                               >
                                 <Sparkles className="w-4 h-4 mr-1" />
                                 AI 분석
                               </Button>
                             )}
-                          </>
-                        ) : (
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              setSelectedAttempt({
-                                ...studentData,
-                                studentId: selectedStudent.student?.id,
-                                distributionId: dist.id,
-                              });
-                              setSelectedDistribution(dist);
-                              setShowAnswerModal(true);
-                            }}
-                          >
-                            답안 입력
-                          </Button>
-                        )}
-                      </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <Card>
+                    <CardContent className="p-8 text-center text-muted-foreground">
+                      아직 응시한 시험이 없습니다.
                     </CardContent>
                   </Card>
-                );
-              })}
-            </div>
-          ) : (
-            <Card>
-              <CardContent className="p-8 text-center text-muted-foreground">
-                배포된 시험이 없습니다.
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      ) : (
-        <div className="h-full flex items-center justify-center">
-          <div className="text-center text-muted-foreground">
-            <User className="w-16 h-16 mx-auto mb-4 opacity-30" />
-            <p>왼쪽 목록에서 학생을 선택하세요.</p>
+                )}
+              </div>
+            )}
+
+            {studentTab === 'reports' && (
+              <div>
+                <h3 className="text-lg font-semibold mb-4">AI 분석 보고서 ({examsWithReports.length}개)</h3>
+                {examsWithReports.length > 0 ? (
+                  <div className="space-y-3">
+                    {examsWithReports.map((examData: any) => (
+                      <Card key={examData.distribution?.id} className="hover-elevate">
+                        <CardContent className="p-4 flex items-center justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-medium truncate">{examData.exam?.title || '시험'}</h4>
+                            <p className="text-sm text-muted-foreground">
+                              {examData.score}/{examData.maxScore}점 ({examData.grade}등급)
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="default">분석 완료</Badge>
+                            <Button size="sm" variant="outline">
+                              보고서 보기
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <Card>
+                    <CardContent className="p-8 text-center text-muted-foreground">
+                      생성된 AI 분석 보고서가 없습니다.
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
           </div>
-        </div>
-      )}
-    </main>
-  );
+        ) : (
+          <div className="h-full flex items-center justify-center">
+            <div className="text-center text-muted-foreground">
+              <User className="w-16 h-16 mx-auto mb-4 opacity-30" />
+              <p>왼쪽 목록에서 학생을 선택하세요.</p>
+            </div>
+          </div>
+        )}
+      </main>
+    );
+  };
 
   const renderStudentManagement = () => (
     <main className="flex-1 overflow-auto p-6" data-testid="content-students">
