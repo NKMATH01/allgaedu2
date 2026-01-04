@@ -11,7 +11,7 @@
 - **다중 지점 관리**: 여러 지점의 통합 관리
 - **시험 관리**: Excel 업로드를 통한 시험 생성
 - **자동 채점**: 1-9등급 자동 계산
-- **AI 분석 리포트**: OpenAI를 활용한 맞춤형 학습 분석
+- **AI 분석 리포트**: Google Gemini API를 활용한 맞춤형 학습 분석
 - **역할별 대시보드**: 각 역할에 맞는 전용 대시보드
 
 ## 기술 스택
@@ -20,7 +20,7 @@
 - **백엔드**: Express.js + TypeScript
 - **데이터베이스**: PostgreSQL + Drizzle ORM
 - **인증**: express-session + bcrypt
-- **AI 통합**: OpenAI (Replit AI Integrations)
+- **AI 통합**: Google Gemini API
 
 ## 프로젝트 구조
 
@@ -98,8 +98,7 @@
 - `SUPABASE_DATABASE_URL` - Supabase PostgreSQL 연결 URL (우선 사용)
 - `DATABASE_URL` - PostgreSQL 연결 URL (폴백)
 - `SESSION_SECRET` - 세션 암호화 키
-- `AI_INTEGRATIONS_OPENAI_API_KEY` - OpenAI API 키 (자동 설정)
-- `AI_INTEGRATIONS_OPENAI_BASE_URL` - OpenAI 기본 URL (자동 설정)
+- `GEMINI_API_KEY` - Google Gemini API 키 (AI 분석 리포트 생성용)
 
 ## 사용자 선호사항
 

@@ -11,17 +11,20 @@ import { hashPassword, verifyPassword, gradeExam } from "./utils/helpers";
 import { requireAuth, requireAdmin, requireBranchManager, requireStudent, requireStudentOrParent } from "./middleware/auth";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { OLGA_REPORT_META_PROMPT_V2 } from "./prompts/olga-report-meta-prompt-v2";
 import { generateReportHTML } from "./templates/newReportTemplate";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// OpenAI client for AI reports
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+// Google Gemini AI client for AI reports
+function getGeminiClient() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY environment variable is not set");
+  }
+  return new GoogleGenerativeAI(apiKey);
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -1643,19 +1646,31 @@ ${JSON.stringify(userData, null, 2)}`;
 
       console.log('[AI Report] Generating report for:', user.name, 'Attempt:', attemptId);
 
-      // Call OpenAI API (adapted from Gemini)
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          { role: "system", content: "당신은 올가교육 수능연구소의 데이터 분석 팀장입니다. 반드시 JSON 형식으로만 응답하세요." },
-          { role: "user", content: prompt }
-        ],
-        response_format: { type: "json_object" },
-        max_tokens: 4000,
-        temperature: 0.7,
+      // Call Google Gemini API
+      const genAI = getGeminiClient();
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-1.5-flash",
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.7,
+          maxOutputTokens: 4000,
+        }
       });
 
-      const responseText = completion.choices[0]?.message?.content || "{}";
+      const result = await model.generateContent({
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }]
+          }
+        ],
+        systemInstruction: {
+          role: "model",
+          parts: [{ text: "당신은 올가교육 수능연구소의 데이터 분석 팀장입니다. 반드시 JSON 형식으로만 응답하세요." }]
+        }
+      });
+
+      const responseText = result.response.text() || "{}";
       let aiAnalysis: any = {};
       
       try {

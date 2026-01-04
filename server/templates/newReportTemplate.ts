@@ -54,7 +54,7 @@ export function generateReportHTML(data: any): string {
   };
 
   // 강점/약점 분석을 위한 HTML 생성
-  const strengthsHTML = reportData.analysis.strengths.map(strength => {
+  const strengthsHTML = reportData.analysis.strengths.map((strength: any) => {
     return '<div class="border border-indigo-300 bg-white p-4 rounded-lg">' +
       '<div class="flex justify-between items-center mb-3">' +
       '<p class="font-bold text-sm text-slate-800">' + escapeHtml(strength.name) + '</p>' +
@@ -67,7 +67,7 @@ export function generateReportHTML(data: any): string {
       '</div>';
   }).join('');
 
-  const weaknessesHTML = reportData.analysis.weaknesses.map(weakness => {
+  const weaknessesHTML = reportData.analysis.weaknesses.map((weakness: any) => {
     return '<div class="border border-red-300 bg-white p-4 rounded-lg">' +
       '<div class="flex justify-between items-center mb-3">' +
       '<p class="font-bold text-sm text-slate-800">' + escapeHtml(weakness.name) + '</p>' +
@@ -81,7 +81,7 @@ export function generateReportHTML(data: any): string {
   }).join('');
 
   // 영역별 상세 분석 HTML 생성
-  const subjectDetailsHTML = reportData.analysis.subjectDetails.map(subject => {
+  const subjectDetailsHTML = reportData.analysis.subjectDetails.map((subject: any) => {
     const colorMap: any = {
       blue: { border: 'border-blue-500', bg: 'bg-blue-50', text: 'text-blue-600', bar: 'bg-blue-500' },
       green: { border: 'border-green-500', bg: 'bg-green-50', text: 'text-green-600', bar: 'bg-green-500' },
