@@ -208,7 +208,7 @@ export default function BranchDashboard({ user }: { user: User }) {
     if (searchQuery) {
       filtered = filtered.filter((s: any) => 
         s.user?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.student?.school?.toLowerCase().includes(searchQuery.toLowerCase())
+        s.school?.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
     
@@ -216,7 +216,7 @@ export default function BranchDashboard({ user }: { user: User }) {
     
     if (sortMode === 'grade') {
       filtered.forEach((s: any) => {
-        const grade = s.student?.grade || '미지정';
+        const grade = s.grade || '미지정';
         if (!grouped[grade]) grouped[grade] = [];
         grouped[grade].push(s);
       });
@@ -229,7 +229,7 @@ export default function BranchDashboard({ user }: { user: User }) {
       return sorted;
     } else {
       filtered.forEach((s: any) => {
-        const className = getClassName(s.student?.id) || '미배정';
+        const className = getClassName(s.id) || '미배정';
         if (!grouped[className]) grouped[className] = [];
         grouped[className].push(s);
       });
@@ -429,18 +429,18 @@ export default function BranchDashboard({ user }: { user: User }) {
               {expandedGrades[groupKey] && (
                 <div className="ml-4 space-y-0.5">
                   {studentsList.map((s: any) => {
-                    const clsName = getClassName(s.student?.id);
+                    const clsName = getClassName(s.id);
                     return (
                       <div
-                        key={s.student?.id}
+                        key={s.id}
                         className={`w-full flex items-center justify-between p-2 rounded-md text-sm hover-elevate cursor-pointer ${
-                          selectedStudent?.student?.id === s.student?.id ? 'bg-primary/10 text-primary' : ''
+                          selectedStudent?.id === s.id ? 'bg-primary/10 text-primary' : ''
                         }`}
                         onClick={() => setSelectedStudent(s)}
                         role="button"
                         tabIndex={0}
                         onKeyDown={(e) => e.key === 'Enter' && setSelectedStudent(s)}
-                        data-testid={`button-select-student-${s.student?.id}`}
+                        data-testid={`button-select-student-${s.id}`}
                       >
                         <span className="truncate">
                           {clsName && <span className="text-muted-foreground">{clsName}_</span>}
@@ -784,13 +784,13 @@ export default function BranchDashboard({ user }: { user: User }) {
             </thead>
             <tbody>
               {students?.length > 0 ? students.map((s: any) => (
-                <tr key={s.student?.id} className="border-b hover:bg-muted/50" data-testid={`row-student-${s.student?.id}`}>
+                <tr key={s.id} className="border-b hover:bg-muted/50" data-testid={`row-student-${s.id}`}>
                   <td className="p-3"><input type="checkbox" className="w-4 h-4" /></td>
-                  <td className="p-3 text-sm">{s.student?.grade || '-'}</td>
+                  <td className="p-3 text-sm">{s.grade || '-'}</td>
                   <td className="p-3 text-sm font-medium">{s.user?.name}</td>
-                  <td className="p-3 text-sm">{s.user?.name}</td>
-                  <td className="p-3 text-sm">{s.student?.parentPhone || '-'}</td>
-                  <td className="p-3 text-sm">-</td>
+                  <td className="p-3 text-sm">{s.user?.phone || '-'}</td>
+                  <td className="p-3 text-sm">{s.parentPhone || '-'}</td>
+                  <td className="p-3 text-sm">{s.parentPhone || '-'}</td>
                   <td className="p-3 text-sm">{s.user?.username}</td>
                   <td className="p-3 text-sm">-</td>
                   <td className="p-3">
@@ -799,7 +799,7 @@ export default function BranchDashboard({ user }: { user: User }) {
                         size="icon"
                         variant="ghost"
                         onClick={() => { setEditingStudent(s); setShowStudentModal(true); }}
-                        data-testid={`button-edit-student-${s.student?.id}`}
+                        data-testid={`button-edit-student-${s.id}`}
                       >
                         <Edit className="w-4 h-4" />
                       </Button>
@@ -808,10 +808,10 @@ export default function BranchDashboard({ user }: { user: User }) {
                         variant="ghost"
                         onClick={() => {
                           if (confirm('정말 삭제하시겠습니까?')) {
-                            deleteStudentMutation.mutate(s.student?.id);
+                            deleteStudentMutation.mutate(s.id);
                           }
                         }}
-                        data-testid={`button-delete-student-${s.student?.id}`}
+                        data-testid={`button-delete-student-${s.id}`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -1125,19 +1125,19 @@ export default function BranchDashboard({ user }: { user: User }) {
                   <label className="text-sm font-medium">학생 선택</label>
                   <div className="border rounded-md p-2 max-h-48 overflow-y-auto space-y-1">
                     {students?.map((s: any) => (
-                      <label key={s.student?.id} className="flex items-center gap-2 p-1 hover:bg-muted rounded cursor-pointer">
+                      <label key={s.id} className="flex items-center gap-2 p-1 hover:bg-muted rounded cursor-pointer">
                         <input
                           type="checkbox"
-                          checked={selectedClassStudents.includes(s.student?.id)}
+                          checked={selectedClassStudents.includes(s.id)}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setSelectedClassStudents([...selectedClassStudents, s.student?.id]);
+                              setSelectedClassStudents([...selectedClassStudents, s.id]);
                             } else {
-                              setSelectedClassStudents(selectedClassStudents.filter(id => id !== s.student?.id));
+                              setSelectedClassStudents(selectedClassStudents.filter(id => id !== s.id));
                             }
                           }}
                         />
-                        <span className="text-sm">{s.user?.name} ({s.student?.grade})</span>
+                        <span className="text-sm">{s.user?.name} ({s.grade})</span>
                       </label>
                     ))}
                   </div>
@@ -1201,19 +1201,19 @@ export default function BranchDashboard({ user }: { user: User }) {
                     <label className="text-sm font-medium">학생 선택</label>
                     <div className="border rounded-md p-2 max-h-48 overflow-y-auto space-y-1">
                       {students?.map((s: any) => (
-                        <label key={s.student?.id} className="flex items-center gap-2 p-1 hover:bg-muted rounded cursor-pointer">
+                        <label key={s.id} className="flex items-center gap-2 p-1 hover:bg-muted rounded cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={selectedStudentIds.includes(s.student?.id)}
+                            checked={selectedStudentIds.includes(s.id)}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                setSelectedStudentIds([...selectedStudentIds, s.student?.id]);
+                                setSelectedStudentIds([...selectedStudentIds, s.id]);
                               } else {
-                                setSelectedStudentIds(selectedStudentIds.filter(id => id !== s.student?.id));
+                                setSelectedStudentIds(selectedStudentIds.filter(id => id !== s.id));
                               }
                             }}
                           />
-                          <span className="text-sm">{s.user?.name} ({s.student?.grade})</span>
+                          <span className="text-sm">{s.user?.name} ({s.grade})</span>
                         </label>
                       ))}
                     </div>
