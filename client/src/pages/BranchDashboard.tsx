@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/button';
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { 
   Users, GraduationCap, FileText, LogOut, ChevronDown, ChevronRight, 
   Plus, Trash2, Edit, Sparkles, Search, User, BookOpen, ClipboardList,
-  Save, RotateCcw, Check, X, AlertTriangle, BarChart3, Download
+  Save, RotateCcw, Check, X, AlertTriangle, BarChart3, Download, Loader2, Ban
 } from 'lucide-react';
 
 interface User {
@@ -54,6 +54,8 @@ export default function BranchDashboard({ user }: { user: User }) {
   const [answerStates, setAnswerStates] = useState<Record<number, 'correct' | 'wrong' | null>>({});
   const [showReportModal, setShowReportModal] = useState(false);
   const [selectedReport, setSelectedReport] = useState<any>(null);
+  const [generatingAttemptId, setGeneratingAttemptId] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const { data: students, refetch: refetchStudents } = useQuery({
     queryKey: ['students', user.branchId],
@@ -184,10 +186,38 @@ export default function BranchDashboard({ user }: { user: User }) {
   });
 
   const generateReportMutation = useMutation({
-    mutationFn: async (attemptId: string) => { const res = await api.post(`/reports/generate/${attemptId}`); return res.data; },
-    onSuccess: (data) => { refetchDistributionStudents(); refetchAllDistributionStudents(); alert(data.message || 'AI 분석이 완료되었습니다.'); },
-    onError: (error: any) => { alert(error.response?.data?.message || 'AI 분석에 실패했습니다.'); },
+    mutationFn: async (attemptId: string) => {
+      abortControllerRef.current = new AbortController();
+      setGeneratingAttemptId(attemptId);
+      const res = await api.post(`/reports/generate/${attemptId}`, {}, {
+        signal: abortControllerRef.current.signal
+      });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      setGeneratingAttemptId(null);
+      abortControllerRef.current = null;
+      refetchDistributionStudents();
+      refetchAllDistributionStudents();
+      alert(data.message || 'AI 분석이 완료되었습니다.');
+    },
+    onError: (error: any) => {
+      setGeneratingAttemptId(null);
+      abortControllerRef.current = null;
+      if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+        return;
+      }
+      alert(error.response?.data?.message || 'AI 분석에 실패했습니다.');
+    },
   });
+
+  const cancelReportGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setGeneratingAttemptId(null);
+    }
+  };
 
   const deleteDistributionMutation = useMutation({
     mutationFn: async (distributionId: string) => { const res = await api.delete(`/distributions/${distributionId}`); return res.data; },
@@ -672,6 +702,16 @@ export default function BranchDashboard({ user }: { user: User }) {
                         <div className="col-span-2 text-center">
                           {!isGraded ? (
                             <span className="text-xs text-muted-foreground">-</span>
+                          ) : generatingAttemptId === examData.attemptId ? (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={cancelReportGeneration}
+                              data-testid={`button-cancel-report-${examId}`}
+                            >
+                              <Ban className="w-4 h-4 mr-1" />
+                              취소
+                            </Button>
                           ) : hasReport ? (
                             <div className="flex items-center justify-center gap-1">
                               <Button
@@ -1023,14 +1063,25 @@ export default function BranchDashboard({ user }: { user: User }) {
                             {s.isSubmitted ? '답안 수정' : '답안 입력'}
                           </Button>
                           {s.isSubmitted && !s.hasReport && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => generateReportMutation.mutate(s.attemptId)}
-                              disabled={generateReportMutation.isPending}
-                            >
-                              <Sparkles className="w-4 h-4" />
-                            </Button>
+                            generatingAttemptId === s.attemptId ? (
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={cancelReportGeneration}
+                              >
+                                <Ban className="w-4 h-4 mr-1" />
+                                취소
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => generateReportMutation.mutate(s.attemptId)}
+                                disabled={generateReportMutation.isPending}
+                              >
+                                <Sparkles className="w-4 h-4" />
+                              </Button>
+                            )
                           )}
                         </div>
                       </td>
