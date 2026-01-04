@@ -1110,7 +1110,7 @@ export async function registerRoutes(
           score: attempt?.score || null,
           maxScore: exam.totalScore,
           grade: attempt?.grade || null,  // exam grade rank (1-9등급)
-          isSubmitted: attempt?.isSubmitted || false,
+          isSubmitted: !!attempt?.submittedAt,  // submitted if submittedAt exists
           submittedAt: attempt?.submittedAt || null,
           answers: attempt?.answers || null,
           hasReport: !!report,
@@ -1242,6 +1242,140 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Submit exam error:", error);
       res.status(500).json({ message: "시험 제출 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Branch manager creates exam attempt for student (GitHub exact)
+  app.post("/api/exam-attempts/branch-create", requireBranchManager, async (req, res) => {
+    try {
+      const { studentId, distributionId } = req.body;
+      
+      if (!studentId || !distributionId) {
+        return res.status(400).json({ success: false, message: "학생 ID와 배포 ID가 필요합니다." });
+      }
+
+      // Get distribution to get examId
+      const [distribution] = await db.select().from(examDistributions)
+        .where(eq(examDistributions.id, distributionId)).limit(1);
+      
+      if (!distribution) {
+        return res.status(404).json({ success: false, message: "배포 정보를 찾을 수 없습니다." });
+      }
+
+      // Check if attempt already exists
+      const existing = await db.select().from(examAttempts)
+        .where(and(
+          eq(examAttempts.studentId, studentId),
+          eq(examAttempts.examId, distribution.examId)
+        )).limit(1);
+
+      if (existing.length > 0) {
+        return res.json({ 
+          success: true, 
+          data: existing[0],
+          message: "이미 답안지가 존재합니다."
+        });
+      }
+
+      // Create new attempt with empty answers
+      const [attempt] = await db.insert(examAttempts).values({
+        examId: distribution.examId,
+        studentId,
+        distributionId,
+        answers: {},
+      }).returning();
+
+      res.json({ 
+        success: true, 
+        data: attempt,
+        message: "답안지가 생성되었습니다."
+      });
+    } catch (error) {
+      console.error("Branch create attempt error:", error);
+      res.status(500).json({ success: false, message: "답안지 생성 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Branch manager grades/updates exam attempt (GitHub exact)
+  app.put("/api/exam-attempts/:attemptId/branch-grade", requireBranchManager, async (req, res) => {
+    try {
+      const { attemptId } = req.params;
+      const { answers } = req.body;
+
+      // Get attempt
+      const [attempt] = await db.select().from(examAttempts)
+        .where(eq(examAttempts.id, attemptId)).limit(1);
+      
+      if (!attempt) {
+        return res.status(404).json({ success: false, message: "답안지를 찾을 수 없습니다." });
+      }
+
+      // Get exam for grading
+      const [exam] = await db.select().from(exams)
+        .where(eq(exams.id, attempt.examId)).limit(1);
+      
+      if (!exam) {
+        return res.status(404).json({ success: false, message: "시험을 찾을 수 없습니다." });
+      }
+
+      // Grade the exam
+      const gradeResult = gradeExam(answers, exam.questionsData as any[]);
+
+      // Update attempt
+      const [updated] = await db.update(examAttempts)
+        .set({
+          answers,
+          score: gradeResult.score,
+          maxScore: gradeResult.maxScore,
+          correctCount: gradeResult.correctCount,
+          grade: gradeResult.grade,
+          submittedAt: new Date(),
+          gradedAt: new Date(),
+        })
+        .where(eq(examAttempts.id, attemptId))
+        .returning();
+
+      res.json({ 
+        success: true, 
+        data: updated,
+        message: "답안이 저장되었습니다."
+      });
+    } catch (error) {
+      console.error("Branch grade attempt error:", error);
+      res.status(500).json({ success: false, message: "답안 저장 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Get single exam attempt
+  app.get("/api/exam-attempts/:attemptId", requireBranchManager, async (req, res) => {
+    try {
+      const { attemptId } = req.params;
+      
+      const [attempt] = await db.select().from(examAttempts)
+        .where(eq(examAttempts.id, attemptId)).limit(1);
+      
+      if (!attempt) {
+        return res.status(404).json({ success: false, message: "답안지를 찾을 수 없습니다." });
+      }
+
+      res.json({ success: true, data: attempt });
+    } catch (error) {
+      console.error("Get attempt error:", error);
+      res.status(500).json({ success: false, message: "답안지 조회 중 오류가 발생했습니다." });
+    }
+  });
+
+  // Delete exam attempt
+  app.delete("/api/exam-attempts/:attemptId", requireBranchManager, async (req, res) => {
+    try {
+      const { attemptId } = req.params;
+      
+      await db.delete(examAttempts).where(eq(examAttempts.id, attemptId));
+
+      res.json({ success: true, message: "답안지가 삭제되었습니다." });
+    } catch (error) {
+      console.error("Delete attempt error:", error);
+      res.status(500).json({ success: false, message: "답안지 삭제 중 오류가 발생했습니다." });
     }
   });
 
