@@ -28,23 +28,36 @@ export function calculateGrade(score: number, maxScore: number): number {
 // Grade exam answers and calculate score
 export function gradeExam(
   answers: Record<string, number>,
-  questionsData: Array<{ questionNumber: number; correctAnswer: number; score: number }>
+  questionsData: Array<{ questionNumber?: number; number?: number; correctAnswer: number; score?: number; points?: number }>
 ): { score: number; maxScore: number; correctCount: number; grade: number } {
   let score = 0;
   let maxScore = 0;
   let correctCount = 0;
 
+  console.log('[gradeExam] Input answers:', JSON.stringify(answers));
+  console.log('[gradeExam] Questions count:', questionsData.length);
+
   for (const question of questionsData) {
-    maxScore += question.score;
-    const studentAnswer = answers[String(question.questionNumber)];
-    if (studentAnswer === question.correctAnswer) {
-      score += question.score;
+    // Handle both score and points field names
+    const questionScore = Number(question.score || question.points || 2);
+    maxScore += questionScore;
+    
+    // Handle both questionNumber and number field names
+    const qNum = question.questionNumber || question.number;
+    const studentAnswer = Number(answers[String(qNum)]);
+    const correctAnswer = Number(question.correctAnswer);
+    
+    console.log(`[gradeExam] Q${qNum}: student=${studentAnswer}, correct=${correctAnswer}, match=${studentAnswer === correctAnswer}`);
+    
+    if (studentAnswer === correctAnswer) {
+      score += questionScore;
       correctCount++;
     }
   }
 
   const grade = calculateGrade(score, maxScore);
 
+  console.log(`[gradeExam] Result: score=${score}/${maxScore}, correct=${correctCount}, grade=${grade}`);
   return { score, maxScore, correctCount, grade };
 }
 
