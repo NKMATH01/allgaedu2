@@ -1861,22 +1861,33 @@ ${incorrectQuestions.slice(0, 5).map((q: any) => `- ${q.domain || '미분류'} �
 
       // Generate full 5-page A4 HTML report using GitHub template
       const htmlContent = generateReportHTML(reportData);
+      console.log('[AI Report] HTML generated, length:', htmlContent.length);
 
       // Save report to database
-      const [report] = await db.insert(aiReports).values({
-        attemptId,
-        studentId: student.id,
-        examId: exam.id,
-        analysis: reportData,
-        weakAreas,
-        recommendations,
-        expectedGrade: typeof expectedGrade === 'number' ? expectedGrade : attempt.grade,
-        summary,
-        htmlContent,
-      }).returning();
+      console.log('[AI Report] Saving to database...');
+      console.log('[AI Report] Data:', { attemptId, studentId: student.id, examId: exam.id, expectedGrade });
+      
+      try {
+        const [report] = await db.insert(aiReports).values({
+          attemptId,
+          studentId: student.id,
+          examId: exam.id,
+          analysis: reportData,
+          weakAreas,
+          recommendations,
+          expectedGrade: typeof expectedGrade === 'number' ? expectedGrade : attempt.grade,
+          summary,
+          htmlContent,
+        }).returning();
 
-      console.log('[AI Report] Generated successfully for:', user.name);
-      res.json(report);
+        console.log('[AI Report] Database insert SUCCESS, report ID:', report.id);
+        console.log('[AI Report] Generated successfully for:', user.name);
+        res.json(report);
+      } catch (dbError: any) {
+        console.error('[AI Report] Database insert FAILED:', dbError?.message || dbError);
+        console.error('[AI Report] Full error:', JSON.stringify(dbError, null, 2));
+        throw dbError;
+      }
     } catch (error: any) {
       console.error("Generate report error:", error);
       
