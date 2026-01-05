@@ -1498,11 +1498,18 @@ export async function registerRoutes(
   app.post("/api/reports/generate/:attemptId", requireBranchManager, async (req, res) => {
     try {
       const { attemptId } = req.params;
+      const forceRegenerate = req.query.force === 'true';
 
       // Check if report already exists
       const [existingReport] = await db.select().from(aiReports).where(eq(aiReports.attemptId, attemptId)).limit(1);
-      if (existingReport) {
+      if (existingReport && !forceRegenerate) {
         return res.json(existingReport);
+      }
+      
+      // Delete existing report if force regenerate
+      if (existingReport && forceRegenerate) {
+        console.log('[AI Report] Force regenerating - deleting existing report');
+        await db.delete(aiReports).where(eq(aiReports.attemptId, attemptId));
       }
 
       // Get attempt with exam and student data
@@ -1723,9 +1730,9 @@ ${incorrectQuestions.slice(0, 5).map((q: any) => `- ${q.domain || '미분류'} �
       // Step 3: Call Gemini API with simplified prompt
       console.log('[AI Report] Initializing Gemini API client...');
       const genAI = getGeminiClient();
-      console.log('[AI Report] Creating model with gemini-2.5-flash...');
+      console.log('[AI Report] Creating model with gemini-2.0-flash...');
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.5-flash",
+        model: "gemini-2.0-flash",
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.7,
