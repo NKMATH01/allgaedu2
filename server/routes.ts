@@ -14,6 +14,7 @@ import * as XLSX from "xlsx";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { OLGA_REPORT_META_PROMPT_V2 } from "./prompts/olga-report-meta-prompt-v2";
 import { generateReportHTML } from "./templates/newReportTemplate";
+import OpenAI from "openai";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -24,6 +25,38 @@ function getGeminiClient() {
     throw new Error("GEMINI_API_KEY environment variable is not set");
   }
   return new GoogleGenerativeAI(apiKey);
+}
+
+// OpenAI client as fallback (using Replit AI Integrations)
+function getOpenAIClient() {
+  return new OpenAI({
+    apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+    baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  });
+}
+
+// Fallback AI generation using OpenAI
+async function generateWithOpenAI(prompt: string): Promise<any> {
+  console.log('[AI Report] Trying OpenAI fallback...');
+  const openai = getOpenAIClient();
+  
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { 
+        role: "system", 
+        content: "You are an educational AI assistant that analyzes student exam results and provides personalized learning advice in Korean. Always respond with valid JSON only." 
+      },
+      { role: "user", content: prompt }
+    ],
+    response_format: { type: "json_object" },
+    max_completion_tokens: 2000,
+    temperature: 0.7,
+  });
+  
+  const content = response.choices[0]?.message?.content || "{}";
+  console.log('[AI Report] OpenAI response length:', content.length);
+  return JSON.parse(content);
 }
 
 export async function registerRoutes(
@@ -1770,19 +1803,30 @@ ${incorrectQuestions.slice(0, 5).map((q: any) => `- ${q.domain || '미분류'} �
           console.log('[AI Report] AI content generated successfully:', Object.keys(aiContent));
           break;
         } catch (aiError: any) {
-          console.error(`[AI Report] Attempt ${retryAttempt + 1} failed:`, aiError?.message || aiError);
-          console.error(`[AI Report] Error details:`, JSON.stringify(aiError, Object.getOwnPropertyNames(aiError), 2));
-          if (retryAttempt === maxRetries - 1 || (aiError?.status !== 429)) {
-            console.log('[AI Report] Using fallback content due to API failure');
-            // Fallback to basic content
-            aiContent = {
-              olgaSummary: `${user.name} 학생은 ${attempt.score}/${attempt.maxScore}점으로 ${attempt.grade}등급을 획득했습니다. 전체적으로 ${Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100)}%의 정답률을 보였습니다.`,
-              domainAnalysis: {},
-              strengthsAnalysis: [],
-              weaknessesAnalysis: [],
-              propensity: { title: '분석 완료', description: '데이터 분석이 완료되었습니다.' }
-            };
-            break;
+          console.error(`[AI Report] Gemini Attempt ${retryAttempt + 1} failed:`, aiError?.message || aiError);
+          
+          // Check if it's a quota/rate limit error - try OpenAI fallback
+          const isQuotaError = aiError?.message?.includes('429') || aiError?.message?.includes('quota') || aiError?.status === 429;
+          
+          if (retryAttempt === maxRetries - 1 || !isQuotaError) {
+            // Try OpenAI fallback before giving up
+            try {
+              console.log('[AI Report] Gemini failed, trying OpenAI fallback...');
+              aiContent = await generateWithOpenAI(simplePrompt);
+              console.log('[AI Report] OpenAI fallback SUCCESS:', Object.keys(aiContent));
+              break;
+            } catch (openaiError: any) {
+              console.error('[AI Report] OpenAI fallback also failed:', openaiError?.message || openaiError);
+              console.log('[AI Report] Using static fallback content');
+              aiContent = {
+                olgaSummary: `${user.name} 학생은 ${attempt.score}/${attempt.maxScore}점으로 ${attempt.grade}등급을 획득했습니다. 전체적으로 ${Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100)}%의 정답률을 보였습니다.`,
+                domainAnalysis: {},
+                strengthsAnalysis: [],
+                weaknessesAnalysis: [],
+                propensity: { title: '분석 완료', description: '데이터 분석이 완료되었습니다.' }
+              };
+              break;
+            }
           }
         }
       }
