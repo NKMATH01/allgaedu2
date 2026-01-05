@@ -1533,15 +1533,30 @@ export async function registerRoutes(
       console.log('[AI Report] Sample question:', JSON.stringify(questionsData?.[0]));
 
       // Calculate domain stats (영역별 성적 분석)
+      // Handle both formats: 
+      // 1. Manager grading: answers = { "1": "correct", "2": "wrong" }
+      // 2. Student submission: answers = { "1": 1, "2": 3 }
       const domainMap = new Map<string, { name: string; correct: number; total: number; earnedScore: number; maxScore: number }>();
       
       for (const q of questionsData) {
         const domain = q.domain || q.topic || q.category || '독서';
         const qNum = q.questionNumber || q.number || (questionsData.indexOf(q) + 1);
-        const studentAnswer = Number(studentAnswers[String(qNum)]);
-        const correctAnswer = Number(q.correctAnswer);
-        const isCorrect = studentAnswer === correctAnswer;
+        const rawAnswer = studentAnswers[String(qNum)];
         const qScore = Number(q.score) || 2;
+        
+        // Determine if correct based on answer format
+        let isCorrect = false;
+        if (rawAnswer === 'correct') {
+          // Manager grading format
+          isCorrect = true;
+        } else if (rawAnswer === 'wrong') {
+          isCorrect = false;
+        } else if (rawAnswer !== undefined && rawAnswer !== null) {
+          // Numeric comparison for student submissions
+          const studentAnswer = Number(rawAnswer);
+          const correctAnswer = Number(q.correctAnswer);
+          isCorrect = !isNaN(studentAnswer) && !isNaN(correctAnswer) && studentAnswer === correctAnswer;
+        }
 
         if (!domainMap.has(domain)) {
           domainMap.set(domain, { name: domain, correct: 0, total: 0, earnedScore: 0, maxScore: 0 });
@@ -1569,20 +1584,23 @@ export async function registerRoutes(
       const sortedAttempts = completedAttempts.sort((a, b) => (b.score || 0) - (a.score || 0));
       const rank = sortedAttempts.findIndex(a => a.id === attemptId) + 1;
 
-      // Prepare wrong/correct questions analysis (타입 변환 적용)
-      const incorrectQuestions = questionsData.filter((q: any) => {
+      // Helper function to check if answer is correct (handles both formats)
+      const checkIsCorrect = (q: any): boolean => {
         const qNum = q.questionNumber || q.number;
-        const studentAns = Number(studentAnswers[String(qNum)]);
-        const correctAns = Number(q.correctAnswer);
-        return studentAns !== correctAns;
-      });
+        const rawAnswer = studentAnswers[String(qNum)];
+        if (rawAnswer === 'correct') return true;
+        if (rawAnswer === 'wrong') return false;
+        if (rawAnswer !== undefined && rawAnswer !== null) {
+          const studentAns = Number(rawAnswer);
+          const correctAns = Number(q.correctAnswer);
+          return !isNaN(studentAns) && !isNaN(correctAns) && studentAns === correctAns;
+        }
+        return false;
+      };
 
-      const correctQuestions = questionsData.filter((q: any) => {
-        const qNum = q.questionNumber || q.number;
-        const studentAns = Number(studentAnswers[String(qNum)]);
-        const correctAns = Number(q.correctAnswer);
-        return studentAns === correctAns;
-      });
+      // Prepare wrong/correct questions analysis
+      const incorrectQuestions = questionsData.filter((q: any) => !checkIsCorrect(q));
+      const correctQuestions = questionsData.filter((q: any) => checkIsCorrect(q));
       
       console.log('[AI Report] Correct:', correctQuestions.length, 'Incorrect:', incorrectQuestions.length);
 
