@@ -1721,9 +1721,11 @@ ${incorrectQuestions.slice(0, 5).map((q: any) => `- ${q.domain || '미분류'} �
 }`;
 
       // Step 3: Call Gemini API with simplified prompt
+      console.log('[AI Report] Initializing Gemini API client...');
       const genAI = getGeminiClient();
+      console.log('[AI Report] Creating model with gemini-1.5-flash...');
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.5-flash",
+        model: "gemini-1.5-flash",
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.7,
@@ -1734,6 +1736,7 @@ ${incorrectQuestions.slice(0, 5).map((q: any) => `- ${q.domain || '미분류'} �
       let aiContent: any = {};
       const maxRetries = 3;
       
+      console.log('[AI Report] Starting Gemini API call...');
       for (let retryAttempt = 0; retryAttempt < maxRetries; retryAttempt++) {
         try {
           if (retryAttempt > 0) {
@@ -1742,11 +1745,14 @@ ${incorrectQuestions.slice(0, 5).map((q: any) => `- ${q.domain || '미분류'} �
             await new Promise(resolve => setTimeout(resolve, delay));
           }
           
+          console.log(`[AI Report] Attempt ${retryAttempt + 1}: Calling generateContent...`);
           const result = await model.generateContent({
             contents: [{ role: "user", parts: [{ text: simplePrompt }] }]
           });
           
+          console.log('[AI Report] Response received, extracting text...');
           const responseText = result.response.text() || "{}";
+          console.log('[AI Report] Raw response length:', responseText.length);
           let cleanedText = responseText.trim();
           if (cleanedText.startsWith('```json')) {
             cleanedText = cleanedText.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
@@ -1754,11 +1760,13 @@ ${incorrectQuestions.slice(0, 5).map((q: any) => `- ${q.domain || '미분류'} �
             cleanedText = cleanedText.replace(/^```\s*/, '').replace(/\s*```$/, '');
           }
           aiContent = JSON.parse(cleanedText);
-          console.log('[AI Report] AI content generated successfully');
+          console.log('[AI Report] AI content generated successfully:', Object.keys(aiContent));
           break;
         } catch (aiError: any) {
-          console.error(`[AI Report] Attempt ${retryAttempt + 1} failed:`, aiError?.message);
+          console.error(`[AI Report] Attempt ${retryAttempt + 1} failed:`, aiError?.message || aiError);
+          console.error(`[AI Report] Error details:`, JSON.stringify(aiError, Object.getOwnPropertyNames(aiError), 2));
           if (retryAttempt === maxRetries - 1 || (aiError?.status !== 429)) {
+            console.log('[AI Report] Using fallback content due to API failure');
             // Fallback to basic content
             aiContent = {
               olgaSummary: `${user.name} 학생은 ${attempt.score}/${attempt.maxScore}점으로 ${attempt.grade}등급을 획득했습니다. 전체적으로 ${Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100)}%의 정답률을 보였습니다.`,
