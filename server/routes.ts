@@ -1723,9 +1723,9 @@ ${incorrectQuestions.slice(0, 5).map((q: any) => `- ${q.domain || '미분류'} �
       // Step 3: Call Gemini API with simplified prompt
       console.log('[AI Report] Initializing Gemini API client...');
       const genAI = getGeminiClient();
-      console.log('[AI Report] Creating model with gemini-1.5-flash...');
+      console.log('[AI Report] Creating model with gemini-2.5-flash...');
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
+        model: "gemini-2.5-flash",
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.7,
