@@ -1525,7 +1525,7 @@ export async function registerRoutes(
 
       const { attempt, exam, student, user } = attemptData;
       const questionsData = exam.questionsData as any[];
-      const studentAnswers = attempt.answers as Record<string, number>;
+      const studentAnswers = attempt.answers as Record<string, number | string>;
 
       console.log('[AI Report] Student:', user.name);
       console.log('[AI Report] Questions count:', questionsData?.length);
@@ -1670,85 +1670,109 @@ export async function registerRoutes(
         }
       };
 
-      // Combine System Prompt + User Data (GitHub exact approach)
-      const prompt = `${OLGA_REPORT_META_PROMPT_V2}
-
-[입력 데이터]
-${JSON.stringify(userData, null, 2)}`;
-
+      // Step 1: Calculate strengths (≥80%) and weaknesses (<60%) from domainStats
+      const strengthDomains = domainStats.filter(d => d.percentage >= 80);
+      const weaknessDomains = domainStats.filter(d => d.percentage < 60);
+      
       console.log('[AI Report] Generating report for:', user.name, 'Attempt:', attemptId);
+      console.log('[AI Report] Strengths:', strengthDomains.map(d => d.name));
+      console.log('[AI Report] Weaknesses:', weaknessDomains.map(d => d.name));
 
-      // Call Google Gemini API with retry logic
+      // Step 2: Build simplified AI prompt - ask for TEXT content only
+      const simplePrompt = `당신은 올가교육 수능연구소의 데이터 분석 전문가입니다.
+아래 학생의 성적 데이터를 분석하여 각 섹션별 텍스트를 작성하세요.
+
+[학생 정보]
+- 이름: ${user.name}
+- 학년: ${student.grade || '고등학생'}
+- 시험: ${exam.title}
+- 점수: ${attempt.score}/${attempt.maxScore}점 (${Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100)}%)
+- 등급: ${attempt.grade}등급
+
+[영역별 성취도]
+${domainStats.map(d => `- ${d.name}: ${d.percentage}% (${d.correct}/${d.total}문항)`).join('\n')}
+
+[강점 영역 (80% 이상)]
+${strengthDomains.length > 0 ? strengthDomains.map(d => `- ${d.name}: ${d.percentage}%`).join('\n') : '없음'}
+
+[약점 영역 (60% 미만)]
+${weaknessDomains.length > 0 ? weaknessDomains.map(d => `- ${d.name}: ${d.percentage}%`).join('\n') : '없음'}
+
+[틀린 문항 분석]
+${incorrectQuestions.slice(0, 5).map((q: any) => `- ${q.domain || '미분류'} 영역, ${q.difficulty || '중'} 난이도`).join('\n')}
+
+다음 JSON 형식으로 응답하세요:
+{
+  "olgaSummary": "올가 분석 총평 (학생의 전체적인 성적 분석과 향후 학습 방향 제시, 200자 내외)",
+  "domainAnalysis": {
+    "영역명1": "해당 영역의 구체적인 분석 텍스트 (100자 내외)",
+    "영역명2": "해당 영역의 구체적인 분석 텍스트 (100자 내외)"
+  },
+  "strengthsAnalysis": [
+    { "domain": "강점 영역명", "text": "강점 분석 텍스트 (100자 내외)" }
+  ],
+  "weaknessesAnalysis": [
+    { "domain": "약점 영역명", "text": "약점 분석 및 개선 방향 텍스트 (100자 내외)" }
+  ],
+  "propensity": {
+    "title": "학생 성향 타입 (예: 안정적 실력형, 도전적 성장형 등)",
+    "description": "성향 설명 (150자 내외)"
+  }
+}`;
+
+      // Step 3: Call Gemini API with simplified prompt
       const genAI = getGeminiClient();
       const model = genAI.getGenerativeModel({ 
         model: "gemini-2.5-flash",
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.7,
-          maxOutputTokens: 4000,
+          maxOutputTokens: 2000,
         }
       });
 
-      // Retry logic with exponential backoff
-      let result: any = null;
-      let lastError: any = null;
+      let aiContent: any = {};
       const maxRetries = 3;
       
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
+      for (let retryAttempt = 0; retryAttempt < maxRetries; retryAttempt++) {
         try {
-          if (attempt > 0) {
-            const delay = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s
-            console.log(`[AI Report] Retrying in ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
+          if (retryAttempt > 0) {
+            const delay = Math.pow(2, retryAttempt) * 1000;
+            console.log(`[AI Report] Retrying in ${delay/1000}s (attempt ${retryAttempt + 1}/${maxRetries})`);
             await new Promise(resolve => setTimeout(resolve, delay));
           }
           
-          result = await model.generateContent({
-            contents: [
-              {
-                role: "user",
-                parts: [{ text: prompt }]
-              }
-            ],
-            systemInstruction: {
-              role: "model",
-              parts: [{ text: "당신은 올가교육 수능연구소의 데이터 분석 팀장입니다. 반드시 JSON 형식으로만 응답하세요." }]
-            }
+          const result = await model.generateContent({
+            contents: [{ role: "user", parts: [{ text: simplePrompt }] }]
           });
-          break; // Success, exit retry loop
-        } catch (retryError: any) {
-          lastError = retryError;
-          console.log(`[AI Report] Attempt ${attempt + 1} failed:`, retryError?.status || retryError?.message);
-          if (retryError?.status !== 429 && retryError?.statusText !== 'Too Many Requests') {
-            throw retryError; // Non-rate-limit error, don't retry
+          
+          const responseText = result.response.text() || "{}";
+          let cleanedText = responseText.trim();
+          if (cleanedText.startsWith('```json')) {
+            cleanedText = cleanedText.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
+          } else if (cleanedText.startsWith('```')) {
+            cleanedText = cleanedText.replace(/^```\s*/, '').replace(/\s*```$/, '');
+          }
+          aiContent = JSON.parse(cleanedText);
+          console.log('[AI Report] AI content generated successfully');
+          break;
+        } catch (aiError: any) {
+          console.error(`[AI Report] Attempt ${retryAttempt + 1} failed:`, aiError?.message);
+          if (retryAttempt === maxRetries - 1 || (aiError?.status !== 429)) {
+            // Fallback to basic content
+            aiContent = {
+              olgaSummary: `${user.name} 학생은 ${attempt.score}/${attempt.maxScore}점으로 ${attempt.grade}등급을 획득했습니다. 전체적으로 ${Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100)}%의 정답률을 보였습니다.`,
+              domainAnalysis: {},
+              strengthsAnalysis: [],
+              weaknessesAnalysis: [],
+              propensity: { title: '분석 완료', description: '데이터 분석이 완료되었습니다.' }
+            };
+            break;
           }
         }
       }
-      
-      if (!result) {
-        throw lastError || new Error('AI 생성 실패');
-      }
 
-      const responseText = result.response.text() || "{}";
-      let aiAnalysis: any = {};
-      
-      try {
-        let cleanedText = responseText.trim();
-        if (cleanedText.startsWith('```json')) {
-          cleanedText = cleanedText.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
-        } else if (cleanedText.startsWith('```')) {
-          cleanedText = cleanedText.replace(/^```\s*/, '').replace(/\s*```$/, '');
-        }
-        aiAnalysis = JSON.parse(cleanedText);
-        
-        if (aiAnalysis.metaVersion === 'v2') {
-          console.log('[AI Report] Meta Prompt v2 응답 확인');
-        }
-      } catch (parseError) {
-        console.error('[AI Report] JSON 파싱 오류:', parseError);
-        aiAnalysis = { olgaSummary: responseText, metaVersion: 'fallback' };
-      }
-
-      // Calculate percentile and standard score
+      // Step 4: Calculate percentile and standard score
       const percentile = completedAttempts.length > 0 
         ? Math.round(100 * (1 - (rank / completedAttempts.length)) * 10) / 10 
         : 50;
@@ -1760,12 +1784,38 @@ ${JSON.stringify(userData, null, 2)}`;
           ? 70 + (attempt.score || 0) / (attempt.maxScore || 100) * 10 
           : Math.round(60 + (attempt.score || 0) / (attempt.maxScore || 100) * 10);
 
-      // Build complete report data (GitHub exact structure)
-      const aiStats = aiAnalysis.stats || {};
-      const aiAnalysisData = aiAnalysis.analysis || {};
+      // Step 5: Map AI content to template structure
+      const domainAnalysisMap = aiContent.domainAnalysis || {};
+      
+      // Build strengths array from calculated data + AI text
+      const strengths = strengthDomains.map(d => ({
+        name: d.name,
+        score: d.percentage,
+        analysisText: domainAnalysisMap[d.name] || 
+          (aiContent.strengthsAnalysis || []).find((s: any) => s.domain === d.name)?.text ||
+          `${d.name} 영역에서 ${d.percentage}%의 우수한 정답률을 보이며, 해당 영역에 대한 탄탄한 기초 실력을 갖추고 있습니다.`
+      }));
+
+      // Build weaknesses array from calculated data + AI text
+      const weaknesses = weaknessDomains.map(d => ({
+        name: d.name,
+        score: d.percentage,
+        analysisText: domainAnalysisMap[d.name] || 
+          (aiContent.weaknessesAnalysis || []).find((w: any) => w.domain === d.name)?.text ||
+          `${d.name} 영역에서 ${d.percentage}%의 정답률로 보완이 필요합니다. 기본 개념 정리와 유형별 문제 풀이 연습이 권장됩니다.`
+      }));
+
+      // Build subjectDetails with AI analysis text
+      const subjectDetails = domainStats.map(d => ({
+        name: d.name,
+        score: d.percentage,
+        scoreText: `취득 ${d.earnedScore}점 / 만점 ${d.maxScore}점 (${d.correct}/${d.total}문항 정답)`,
+        statusColor: d.percentage >= 80 ? 'blue' : d.percentage >= 70 ? 'green' : d.percentage >= 60 ? 'orange' : 'red',
+        analysisText: domainAnalysisMap[d.name] || `${d.name} 영역에서 ${d.percentage}%의 정답률을 기록했습니다.`
+      }));
 
       const reportData = {
-        metaVersion: aiAnalysis.metaVersion || 'v2',
+        metaVersion: 'v2-simplified',
         studentInfo: {
           name: user.name,
           school: student.school || '미지정',
@@ -1780,7 +1830,7 @@ ${JSON.stringify(userData, null, 2)}`;
           percentile: percentile,
         },
         charts: {
-          radarChartData: aiStats.domainChartData || {
+          radarChartData: {
             student: domainStats.map(d => d.percentage),
             average: domainStats.map(() => 65),
           },
@@ -1792,28 +1842,22 @@ ${JSON.stringify(userData, null, 2)}`;
           ],
         },
         analysis: {
-          olgaSummary: aiAnalysisData.olgaSummary || `${user.name} 학생의 성적 분석 결과입니다.`,
-          subjectDetails: aiAnalysisData.subjectDetails || domainStats.map((d: any) => ({
-            name: d.name,
-            score: d.percentage,
-            scoreText: `취득 ${d.earnedScore}점 / 만점 ${d.maxScore}점 (${d.correct}/${d.total}문항 정답)`,
-            statusColor: d.percentage >= 80 ? 'blue' : d.percentage >= 70 ? 'green' : d.percentage >= 60 ? 'orange' : 'red',
-            analysisText: `${d.name} 영역에서 ${d.percentage}%의 정답률을 기록했습니다.`,
-          })),
-          strengths: aiAnalysisData.strengths || [],
-          weaknesses: aiAnalysisData.weaknesses || [],
-          propensity: aiAnalysisData.propensity || {
-            typeTitle: '분석 중',
-            typeDescription: '성향 분석 데이터가 생성 중입니다.',
+          olgaSummary: aiContent.olgaSummary || `${user.name} 학생의 성적 분석 결과입니다.`,
+          subjectDetails,
+          strengths,
+          weaknesses,
+          propensity: {
+            typeTitle: aiContent.propensity?.title || '분석 완료',
+            typeDescription: aiContent.propensity?.description || `${user.name} 학생은 ${attempt.grade}등급 수준의 실력을 갖추고 있습니다.`,
           },
         },
       };
 
       // Extract legacy format fields for database
-      const summary = aiAnalysisData.olgaSummary || reportData.analysis.olgaSummary;
-      const weakAreas = (aiAnalysisData.weaknesses || []).map((w: any) => w.name || w);
-      const recommendations = (aiAnalysisData.strengths || []).map((s: any) => s.analysisText || s);
-      const expectedGrade = aiAnalysis.stats?.grade || attempt.grade;
+      const summary = reportData.analysis.olgaSummary;
+      const weakAreas = weaknesses.map((w: any) => w.name);
+      const recommendations = strengths.map((s: any) => s.analysisText);
+      const expectedGrade = attempt.grade;
 
       // Generate full 5-page A4 HTML report using GitHub template
       const htmlContent = generateReportHTML(reportData);
