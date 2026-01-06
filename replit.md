@@ -50,6 +50,38 @@
 - **examDistributions**: 시험 배포
 - **examAttempts**: 시험 응시 기록
 - **aiReports**: AI 분석 리포트
+- **examAnalysisData**: 시험 구조 분석 (Step 1 캐싱)
+- **studentScoreData**: 학생 성적 데이터 (Step 2 저장)
+- **aiAnalysisData**: AI 분석 인사이트 (Step 3 저장)
+
+## 4단계 리포트 생성 시스템
+
+AI 리포트 생성은 4단계로 분리되어 효율적인 데이터 관리와 캐싱을 제공합니다:
+
+### Step 1: 시험지 분석 (step1AnalyzeExam)
+- 시험 구조 분석 및 영역/난이도 분포 계산
+- 결과는 `examAnalysisData` 테이블에 캐싱됨
+- 동일 시험에 대해 재사용 가능
+
+### Step 2: 학생 성적 계산 (step2CalculateStudentScore)
+- 개별 학생의 정오답 분석, 영역별 점수 계산
+- 강점/약점 영역 자동 식별
+- 결과는 `studentScoreData` 테이블에 저장
+
+### Step 3: AI 분석 생성 (step3GenerateAIAnalysis)
+- Gemini API (우선) → OpenAI 폴백 (gpt-4o-mini)
+- 맞춤형 학습 조언 및 성향 분석 생성
+- 결과는 `aiAnalysisData` 테이블에 저장 (AI 제공자 추적)
+
+### Step 4: 최종 리포트 생성 (step4GenerateReport)
+- 모든 데이터를 조합하여 5페이지 A4 HTML 리포트 생성
+- `aiReports` 테이블에 최종 리포트 저장
+
+### 캐싱 및 재생성
+- `force=true` 쿼리 파라미터로 학생별 캐시 무시 가능
+- **Step 1 (시험 분석)**: 시험별 공유 캐시 - 시험 문항 변경 시에만 재생성
+- **Step 2-3 (학생 데이터)**: 응시별 개별 캐시 - force=true 시 재생성
+- Step 1-3 데이터는 독립적으로 캐싱되어 성능 최적화
 
 ## API 엔드포인트
 

@@ -145,6 +145,58 @@ export const aiReports = pgTable('ai_reports', {
   generatedAt: timestamp('generated_at').defaultNow().notNull(),
 });
 
+// Step 1: 시험지 분석 데이터 (Exam Analysis Data)
+export const examAnalysisData = pgTable('exam_analysis_data', {
+  id: varchar('id', { length: 255 }).primaryKey().default(sql`gen_random_uuid()`),
+  examId: varchar('exam_id', { length: 255 }).notNull().references(() => exams.id, { onDelete: 'cascade' }),
+  totalQuestions: integer('total_questions').notNull(),
+  totalScore: integer('total_score').notNull(),
+  domainBreakdown: json('domain_breakdown').notNull(), // 영역별 문항수/배점 분포
+  difficultyBreakdown: json('difficulty_breakdown').notNull(), // 난이도별 문항 분포
+  questionTypeBreakdown: json('question_type_breakdown').notNull(), // 유형별 문항 분포
+  examCharacteristics: json('exam_characteristics'), // 시험 특성 분석
+  analyzedAt: timestamp('analyzed_at').defaultNow().notNull(),
+});
+
+// Step 2: 학생 성적 데이터 (Student Score Data)
+export const studentScoreData = pgTable('student_score_data', {
+  id: varchar('id', { length: 255 }).primaryKey().default(sql`gen_random_uuid()`),
+  attemptId: varchar('attempt_id', { length: 255 }).notNull().unique().references(() => examAttempts.id, { onDelete: 'cascade' }),
+  studentId: varchar('student_id', { length: 255 }).notNull().references(() => students.id, { onDelete: 'cascade' }),
+  examId: varchar('exam_id', { length: 255 }).notNull().references(() => exams.id, { onDelete: 'cascade' }),
+  rawScore: integer('raw_score').notNull(),
+  maxScore: integer('max_score').notNull(),
+  percentile: integer('percentile'), // 백분위
+  grade: integer('grade'), // 1-9등급
+  correctCount: integer('correct_count').notNull(),
+  incorrectCount: integer('incorrect_count').notNull(),
+  domainScores: json('domain_scores').notNull(), // 영역별 점수/정답률
+  difficultyScores: json('difficulty_scores').notNull(), // 난이도별 정답률
+  incorrectQuestions: json('incorrect_questions').notNull(), // 오답 문항 상세
+  correctQuestions: json('correct_questions').notNull(), // 정답 문항 상세
+  strengthDomains: json('strength_domains').notNull(), // 강점 영역 (≥80%)
+  weaknessDomains: json('weakness_domains').notNull(), // 약점 영역 (<60%)
+  calculatedAt: timestamp('calculated_at').defaultNow().notNull(),
+});
+
+// Step 3: AI 분석 데이터 (AI Analysis Data)
+export const aiAnalysisData = pgTable('ai_analysis_data', {
+  id: varchar('id', { length: 255 }).primaryKey().default(sql`gen_random_uuid()`),
+  attemptId: varchar('attempt_id', { length: 255 }).notNull().unique().references(() => examAttempts.id, { onDelete: 'cascade' }),
+  studentId: varchar('student_id', { length: 255 }).notNull().references(() => students.id, { onDelete: 'cascade' }),
+  examId: varchar('exam_id', { length: 255 }).notNull().references(() => exams.id, { onDelete: 'cascade' }),
+  propensityType: text('propensity_type').notNull(), // 학생 성향 유형
+  propensityDescription: text('propensity_description').notNull(), // 성향 설명
+  overallSummary: text('overall_summary').notNull(), // 총평
+  domainAnalyses: json('domain_analyses').notNull(), // 영역별 상세 분석 텍스트
+  strengthAnalyses: json('strength_analyses').notNull(), // 강점 영역 분석
+  weaknessAnalyses: json('weakness_analyses').notNull(), // 약점 영역 분석
+  learningStrategy: json('learning_strategy').notNull(), // 12주 학습 전략
+  predictedProgress: json('predicted_progress').notNull(), // 예상 성적 향상
+  aiProvider: text('ai_provider'), // gemini or openai
+  generatedAt: timestamp('generated_at').defaultNow().notNull(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ one }) => ({
   branch: one(branches, {
@@ -303,6 +355,9 @@ export const insertExamSchema = createInsertSchema(exams).omit({ id: true, creat
 export const insertExamDistributionSchema = createInsertSchema(examDistributions).omit({ id: true, createdAt: true });
 export const insertExamAttemptSchema = createInsertSchema(examAttempts).omit({ id: true, startedAt: true });
 export const insertAiReportSchema = createInsertSchema(aiReports).omit({ id: true, generatedAt: true });
+export const insertExamAnalysisDataSchema = createInsertSchema(examAnalysisData).omit({ id: true, analyzedAt: true });
+export const insertStudentScoreDataSchema = createInsertSchema(studentScoreData).omit({ id: true, calculatedAt: true });
+export const insertAiAnalysisDataSchema = createInsertSchema(aiAnalysisData).omit({ id: true, generatedAt: true });
 
 // Types
 export type User = typeof users.$inferSelect;
@@ -326,6 +381,12 @@ export type InsertAiReport = z.infer<typeof insertAiReportSchema>;
 export type StudentParent = typeof studentParents.$inferSelect;
 export type StudentClass = typeof studentClasses.$inferSelect;
 export type DistributionStudent = typeof distributionStudents.$inferSelect;
+export type ExamAnalysisData = typeof examAnalysisData.$inferSelect;
+export type InsertExamAnalysisData = z.infer<typeof insertExamAnalysisDataSchema>;
+export type StudentScoreData = typeof studentScoreData.$inferSelect;
+export type InsertStudentScoreData = z.infer<typeof insertStudentScoreDataSchema>;
+export type AiAnalysisData = typeof aiAnalysisData.$inferSelect;
+export type InsertAiAnalysisData = z.infer<typeof insertAiAnalysisDataSchema>;
 
 // Re-export chat models for AI integration
 export * from "./models/chat";

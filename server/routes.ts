@@ -4,60 +4,23 @@ import { db } from "./db";
 import { 
   users, branches, classes, students, parents, exams, 
   examDistributions, examAttempts, aiReports, studentParents, 
-  studentClasses, distributionStudents 
+  studentClasses, distributionStudents,
+  examAnalysisData, studentScoreData, aiAnalysisData
 } from "@shared/schema";
 import { eq, and, desc, or, inArray, sql } from "drizzle-orm";
 import { hashPassword, verifyPassword, gradeExam } from "./utils/helpers";
 import { requireAuth, requireAdmin, requireBranchManager, requireStudent, requireStudentOrParent } from "./middleware/auth";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { OLGA_REPORT_META_PROMPT_V2 } from "./prompts/olga-report-meta-prompt-v2";
 import { generateReportHTML } from "./templates/newReportTemplate";
-import OpenAI from "openai";
+import { 
+  step1AnalyzeExam, 
+  step2CalculateStudentScore, 
+  step3GenerateAIAnalysis, 
+  step4GenerateReport 
+} from "./utils/reportGenerator";
 
 const upload = multer({ storage: multer.memoryStorage() });
-
-// Google Gemini AI client for AI reports
-function getGeminiClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY environment variable is not set");
-  }
-  return new GoogleGenerativeAI(apiKey);
-}
-
-// OpenAI client as fallback (using Replit AI Integrations)
-function getOpenAIClient() {
-  return new OpenAI({
-    apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-    baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  });
-}
-
-// Fallback AI generation using OpenAI
-async function generateWithOpenAI(prompt: string): Promise<any> {
-  console.log('[AI Report] Trying OpenAI fallback...');
-  const openai = getOpenAIClient();
-  
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      { 
-        role: "system", 
-        content: "You are an educational AI assistant that analyzes student exam results and provides personalized learning advice in Korean. Always respond with valid JSON only." 
-      },
-      { role: "user", content: prompt }
-    ],
-    response_format: { type: "json_object" },
-    max_completion_tokens: 2000,
-    temperature: 0.7,
-  });
-  
-  const content = response.choices[0]?.message?.content || "{}";
-  console.log('[AI Report] OpenAI response length:', content.length);
-  return JSON.parse(content);
-}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -1527,21 +1490,25 @@ export async function registerRoutes(
 
   // ============ AI REPORT ROUTES ============
 
-  // Generate AI report for attempt (GitHub exact implementation with OLGA Meta Prompt v2)
+  // Generate AI report for attempt (4-Step Report Generation System)
   app.post("/api/reports/generate/:attemptId", requireBranchManager, async (req, res) => {
     try {
       const { attemptId } = req.params;
       const forceRegenerate = req.query.force === 'true';
 
+      console.log('[Report 4-Step] Starting report generation for attempt:', attemptId);
+      console.log('[Report 4-Step] Force regenerate:', forceRegenerate);
+
       // Check if report already exists
       const [existingReport] = await db.select().from(aiReports).where(eq(aiReports.attemptId, attemptId)).limit(1);
       if (existingReport && !forceRegenerate) {
+        console.log('[Report 4-Step] Returning existing report');
         return res.json(existingReport);
       }
-      
-      // Delete existing report if force regenerate
-      if (existingReport && forceRegenerate) {
-        console.log('[AI Report] Force regenerating - deleting existing report');
+
+      // If force regenerating, clear the final report and let step functions handle their own cache
+      if (forceRegenerate) {
+        console.log('[Report 4-Step] Force regenerate - clearing final report for attempt:', attemptId);
         await db.delete(aiReports).where(eq(aiReports.attemptId, attemptId));
       }
 
@@ -1564,397 +1531,59 @@ export async function registerRoutes(
       }
 
       const { attempt, exam, student, user } = attemptData;
-      const questionsData = exam.questionsData as any[];
-      const studentAnswers = attempt.answers as Record<string, number | string>;
+      console.log('[Report 4-Step] Student:', user.name, '| Exam:', exam.title);
 
-      console.log('[AI Report] Student:', user.name);
-      console.log('[AI Report] Questions count:', questionsData?.length);
-      console.log('[AI Report] Student answers:', JSON.stringify(studentAnswers));
-      console.log('[AI Report] Sample question:', JSON.stringify(questionsData?.[0]));
+      // ========== STEP 1: 시험지 분석 ==========
+      // Note: Step 1 is exam-level cache (shared across all students)
+      // It's only regenerated when exam questions change, not per-student force regenerate
+      console.log('[Report 4-Step] === STEP 1: Exam Analysis ===');
+      const examAnalysis = await step1AnalyzeExam(exam.id);
+      console.log('[Report 4-Step] Step 1 complete - domains:', examAnalysis.domainBreakdown.length);
 
-      // Calculate domain stats (영역별 성적 분석)
-      // Handle both formats: 
-      // 1. Manager grading: answers = { "1": "correct", "2": "wrong" }
-      // 2. Student submission: answers = { "1": 1, "2": 3 }
-      const domainMap = new Map<string, { name: string; correct: number; total: number; earnedScore: number; maxScore: number }>();
+      // ========== STEP 2: 학생 성적 계산 ==========
+      console.log('[Report 4-Step] === STEP 2: Student Score Calculation ===');
+      const scoreData = await step2CalculateStudentScore(attemptId, forceRegenerate);
+      console.log('[Report 4-Step] Step 2 complete - score:', scoreData.rawScore, '/', scoreData.maxScore);
+
+      // ========== STEP 3: AI 분석 생성 ==========
+      console.log('[Report 4-Step] === STEP 3: AI Analysis Generation ===');
+      const aiAnalysis = await step3GenerateAIAnalysis(
+        attemptId,
+        user.name,
+        student.grade || '고등학생',
+        exam.title,
+        scoreData,
+        forceRegenerate
+      );
+      console.log('[Report 4-Step] Step 3 complete - provider:', aiAnalysis.aiProvider);
+
+      // ========== STEP 4: 최종 리포트 생성 ==========
+      console.log('[Report 4-Step] === STEP 4: Final Report Generation ===');
+      const { reportId, htmlContent } = await step4GenerateReport(
+        attemptId,
+        user.name,
+        student.school || '',
+        student.grade || '',
+        examAnalysis,
+        scoreData,
+        aiAnalysis,
+        forceRegenerate
+      );
+      console.log('[Report 4-Step] Step 4 complete - report ID:', reportId);
+
+      // Return the generated report
+      const [report] = await db.select().from(aiReports).where(eq(aiReports.id, reportId)).limit(1);
+      console.log('[Report 4-Step] Report generation complete for:', user.name);
       
-      for (const q of questionsData) {
-        const domain = q.domain || q.topic || q.category || '독서';
-        const qNum = q.questionNumber || q.number || (questionsData.indexOf(q) + 1);
-        const rawAnswer = studentAnswers[String(qNum)];
-        const qScore = Number(q.score) || 2;
-        
-        // Determine if correct based on answer format
-        let isCorrect = false;
-        if (rawAnswer === 'correct') {
-          // Manager grading format
-          isCorrect = true;
-        } else if (rawAnswer === 'wrong') {
-          isCorrect = false;
-        } else if (rawAnswer !== undefined && rawAnswer !== null) {
-          // Numeric comparison for student submissions
-          const studentAnswer = Number(rawAnswer);
-          const correctAnswer = Number(q.correctAnswer);
-          isCorrect = !isNaN(studentAnswer) && !isNaN(correctAnswer) && studentAnswer === correctAnswer;
-        }
-
-        if (!domainMap.has(domain)) {
-          domainMap.set(domain, { name: domain, correct: 0, total: 0, earnedScore: 0, maxScore: 0 });
-        }
-
-        const domainData = domainMap.get(domain)!;
-        domainData.total++;
-        domainData.maxScore += qScore;
-        if (isCorrect) {
-          domainData.correct++;
-          domainData.earnedScore += qScore;
-        }
-      }
-
-      const domainStats = Array.from(domainMap.values()).map(d => ({
-        ...d,
-        percentage: d.total > 0 ? Math.round((d.correct / d.total) * 100) : 0,
-      }));
-
-      console.log('[AI Report] Domain stats:', JSON.stringify(domainStats, null, 2));
-
-      // Get all completed attempts for ranking
-      const allAttempts = await db.select().from(examAttempts).where(eq(examAttempts.examId, attempt.examId));
-      const completedAttempts = allAttempts.filter(a => a.score !== null && a.submittedAt !== null);
-      const sortedAttempts = completedAttempts.sort((a, b) => (b.score || 0) - (a.score || 0));
-      const rank = sortedAttempts.findIndex(a => a.id === attemptId) + 1;
-
-      // Helper function to check if answer is correct (handles both formats)
-      const checkIsCorrect = (q: any): boolean => {
-        const qNum = q.questionNumber || q.number;
-        const rawAnswer = studentAnswers[String(qNum)];
-        if (rawAnswer === 'correct') return true;
-        if (rawAnswer === 'wrong') return false;
-        if (rawAnswer !== undefined && rawAnswer !== null) {
-          const studentAns = Number(rawAnswer);
-          const correctAns = Number(q.correctAnswer);
-          return !isNaN(studentAns) && !isNaN(correctAns) && studentAns === correctAns;
-        }
-        return false;
-      };
-
-      // Prepare wrong/correct questions analysis
-      const incorrectQuestions = questionsData.filter((q: any) => !checkIsCorrect(q));
-      const correctQuestions = questionsData.filter((q: any) => checkIsCorrect(q));
-      
-      console.log('[AI Report] Correct:', correctQuestions.length, 'Incorrect:', incorrectQuestions.length);
-
-      // 학년별 프로그램 철학 (GitHub exact)
-      const gradePhilosophy: { [key: string]: string } = {
-        '중1': '올가의 중1 프로그램은 국어의 기초 개념을 튼튼히 다지는 데 중점을 둡니다.',
-        '중2': '올가의 중2 프로그램은 독해력과 문법의 심화 학습에 집중합니다.',
-        '중3': '올가의 중3 프로그램은 고등 국어로의 전환을 준비하며 실전 독해를 강화합니다.',
-        '고1': '올가의 고1 프로그램은 수능 국어의 기본 체계를 구축하는 데 집중합니다.',
-        '고2': '올가의 고2 프로그램은 수능 독서 지문 분석과 문학 감상 능력을 고도화합니다.',
-        '고3': '올가의 고3 프로그램은 수능 최적화 전략과 킬러 문항 대응력을 완성합니다.',
-      };
-      const philosophy = gradePhilosophy[student.grade || ''] || '올가의 프로그램은 학생의 실력 향상에 집중합니다.';
-
-      // Build userData for AI (GitHub exact structure)
-      const userData = {
-        studentAnswer: {
-          학생명: user.name,
-          학년: student.grade || '고등학생',
-          시험명: exam.title,
-          원점수: attempt.score,
-          만점: attempt.maxScore,
-          정답률: Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100),
-          등급: attempt.grade,
-          순위: `${rank}/${completedAttempts.length}`,
-          프로그램철학: philosophy,
-          영역별성취도: domainStats.map(d => ({
-            영역: d.name,
-            취득점수: d.earnedScore,
-            만점: d.maxScore,
-            정답수: d.correct,
-            전체문항: d.total,
-            정답률: d.percentage
-          }))
-        },
-        masterCsv: {
-          틀린문항: incorrectQuestions.map((q: any) => {
-            const qNum = q.questionNumber || q.number;
-            return {
-              문항번호: qNum,
-              영역: q.domain || q.topic || '미분류',
-              난이도: q.difficulty || '중',
-              유형: q.typeAnalysis || q.type || '미분류',
-              소분류: q.subcategory || q.concept || '미분류',
-              정답: q.correctAnswer,
-              학생답안: studentAnswers[String(qNum)] || '무응답'
-            };
-          }),
-          맞은문항: correctQuestions.map((q: any) => {
-            const qNum = q.questionNumber || q.number;
-            return {
-              문항번호: qNum,
-              영역: q.domain || q.topic || '미분류',
-              난이도: q.difficulty || '중',
-              유형: q.typeAnalysis || q.type || '미분류',
-              소분류: q.subcategory || q.concept || '미분류'
-            };
-          })
-        },
-        average: {
-          응시학생수: completedAttempts.length,
-          영역별평균: domainStats.map(d => ({
-            영역: d.name,
-            평균점수: Math.round(d.maxScore * 0.65),
-            평균정답률: 65
-          }))
-        }
-      };
-
-      // Step 1: Calculate strengths (≥80%) and weaknesses (<60%) from domainStats
-      const strengthDomains = domainStats.filter(d => d.percentage >= 80);
-      const weaknessDomains = domainStats.filter(d => d.percentage < 60);
-      
-      console.log('[AI Report] Generating report for:', user.name, 'Attempt:', attemptId);
-      console.log('[AI Report] Strengths:', strengthDomains.map(d => d.name));
-      console.log('[AI Report] Weaknesses:', weaknessDomains.map(d => d.name));
-
-      // Step 2: Build simplified AI prompt - ask for TEXT content only
-      const simplePrompt = `당신은 올가교육 수능연구소의 데이터 분석 전문가입니다.
-아래 학생의 성적 데이터를 분석하여 각 섹션별 텍스트를 작성하세요.
-
-[학생 정보]
-- 이름: ${user.name}
-- 학년: ${student.grade || '고등학생'}
-- 시험: ${exam.title}
-- 점수: ${attempt.score}/${attempt.maxScore}점 (${Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100)}%)
-- 등급: ${attempt.grade}등급
-
-[영역별 성취도]
-${domainStats.map(d => `- ${d.name}: ${d.percentage}% (${d.correct}/${d.total}문항)`).join('\n')}
-
-[강점 영역 (80% 이상)]
-${strengthDomains.length > 0 ? strengthDomains.map(d => `- ${d.name}: ${d.percentage}%`).join('\n') : '없음'}
-
-[약점 영역 (60% 미만)]
-${weaknessDomains.length > 0 ? weaknessDomains.map(d => `- ${d.name}: ${d.percentage}%`).join('\n') : '없음'}
-
-[틀린 문항 분석]
-${incorrectQuestions.slice(0, 5).map((q: any) => `- ${q.domain || '미분류'} 영역, ${q.difficulty || '중'} 난이도`).join('\n')}
-
-다음 JSON 형식으로 응답하세요:
-{
-  "olgaSummary": "올가 분석 총평 (학생의 전체적인 성적 분석과 향후 학습 방향 제시, 200자 내외)",
-  "domainAnalysis": {
-    "영역명1": "해당 영역의 구체적인 분석 텍스트 (100자 내외)",
-    "영역명2": "해당 영역의 구체적인 분석 텍스트 (100자 내외)"
-  },
-  "strengthsAnalysis": [
-    { "domain": "강점 영역명", "text": "강점 분석 텍스트 (100자 내외)" }
-  ],
-  "weaknessesAnalysis": [
-    { "domain": "약점 영역명", "text": "약점 분석 및 개선 방향 텍스트 (100자 내외)" }
-  ],
-  "propensity": {
-    "title": "학생 성향 타입 (예: 안정적 실력형, 도전적 성장형 등)",
-    "description": "성향 설명 (150자 내외)"
-  }
-}`;
-
-      // Step 3: Call Gemini API with simplified prompt
-      console.log('[AI Report] Initializing Gemini API client...');
-      const genAI = getGeminiClient();
-      console.log('[AI Report] Creating model with gemini-2.0-flash...');
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.0-flash",
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.7,
-          maxOutputTokens: 2000,
-        }
-      });
-
-      let aiContent: any = {};
-      const maxRetries = 3;
-      
-      console.log('[AI Report] Starting Gemini API call...');
-      for (let retryAttempt = 0; retryAttempt < maxRetries; retryAttempt++) {
-        try {
-          if (retryAttempt > 0) {
-            const delay = Math.pow(2, retryAttempt) * 1000;
-            console.log(`[AI Report] Retrying in ${delay/1000}s (attempt ${retryAttempt + 1}/${maxRetries})`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-          }
-          
-          console.log(`[AI Report] Attempt ${retryAttempt + 1}: Calling generateContent...`);
-          const result = await model.generateContent({
-            contents: [{ role: "user", parts: [{ text: simplePrompt }] }]
-          });
-          
-          console.log('[AI Report] Response received, extracting text...');
-          const responseText = result.response.text() || "{}";
-          console.log('[AI Report] Raw response length:', responseText.length);
-          let cleanedText = responseText.trim();
-          if (cleanedText.startsWith('```json')) {
-            cleanedText = cleanedText.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
-          } else if (cleanedText.startsWith('```')) {
-            cleanedText = cleanedText.replace(/^```\s*/, '').replace(/\s*```$/, '');
-          }
-          aiContent = JSON.parse(cleanedText);
-          console.log('[AI Report] AI content generated successfully:', Object.keys(aiContent));
-          break;
-        } catch (aiError: any) {
-          console.error(`[AI Report] Gemini Attempt ${retryAttempt + 1} failed:`, aiError?.message || aiError);
-          
-          // Check if it's a quota/rate limit error - try OpenAI fallback
-          const isQuotaError = aiError?.message?.includes('429') || aiError?.message?.includes('quota') || aiError?.status === 429;
-          
-          if (retryAttempt === maxRetries - 1 || !isQuotaError) {
-            // Try OpenAI fallback before giving up
-            try {
-              console.log('[AI Report] Gemini failed, trying OpenAI fallback...');
-              aiContent = await generateWithOpenAI(simplePrompt);
-              console.log('[AI Report] OpenAI fallback SUCCESS:', Object.keys(aiContent));
-              break;
-            } catch (openaiError: any) {
-              console.error('[AI Report] OpenAI fallback also failed:', openaiError?.message || openaiError);
-              console.log('[AI Report] Using static fallback content');
-              aiContent = {
-                olgaSummary: `${user.name} 학생은 ${attempt.score}/${attempt.maxScore}점으로 ${attempt.grade}등급을 획득했습니다. 전체적으로 ${Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100)}%의 정답률을 보였습니다.`,
-                domainAnalysis: {},
-                strengthsAnalysis: [],
-                weaknessesAnalysis: [],
-                propensity: { title: '분석 완료', description: '데이터 분석이 완료되었습니다.' }
-              };
-              break;
-            }
-          }
-        }
-      }
-
-      // Step 4: Calculate percentile and standard score
-      const percentile = completedAttempts.length > 0 
-        ? Math.round(100 * (1 - (rank / completedAttempts.length)) * 10) / 10 
-        : 50;
-      
-      const gradeValue = attempt.grade || 5;
-      const standardScore = gradeValue <= 2 
-        ? 80 + (attempt.score || 0) / (attempt.maxScore || 100) * 20 
-        : gradeValue <= 4 
-          ? 70 + (attempt.score || 0) / (attempt.maxScore || 100) * 10 
-          : Math.round(60 + (attempt.score || 0) / (attempt.maxScore || 100) * 10);
-
-      // Step 5: Map AI content to template structure
-      const domainAnalysisMap = aiContent.domainAnalysis || {};
-      
-      // Build strengths array from calculated data + AI text
-      const strengths = strengthDomains.map(d => ({
-        name: d.name,
-        score: d.percentage,
-        analysisText: domainAnalysisMap[d.name] || 
-          (aiContent.strengthsAnalysis || []).find((s: any) => s.domain === d.name)?.text ||
-          `${d.name} 영역에서 ${d.percentage}%의 우수한 정답률을 보이며, 해당 영역에 대한 탄탄한 기초 실력을 갖추고 있습니다.`
-      }));
-
-      // Build weaknesses array from calculated data + AI text
-      const weaknesses = weaknessDomains.map(d => ({
-        name: d.name,
-        score: d.percentage,
-        analysisText: domainAnalysisMap[d.name] || 
-          (aiContent.weaknessesAnalysis || []).find((w: any) => w.domain === d.name)?.text ||
-          `${d.name} 영역에서 ${d.percentage}%의 정답률로 보완이 필요합니다. 기본 개념 정리와 유형별 문제 풀이 연습이 권장됩니다.`
-      }));
-
-      // Build subjectDetails with AI analysis text
-      const subjectDetails = domainStats.map(d => ({
-        name: d.name,
-        score: d.percentage,
-        scoreText: `취득 ${d.earnedScore}점 / 만점 ${d.maxScore}점 (${d.correct}/${d.total}문항 정답)`,
-        statusColor: d.percentage >= 80 ? 'blue' : d.percentage >= 70 ? 'green' : d.percentage >= 60 ? 'orange' : 'red',
-        analysisText: domainAnalysisMap[d.name] || `${d.name} 영역에서 ${d.percentage}%의 정답률을 기록했습니다.`
-      }));
-
-      const reportData = {
-        metaVersion: 'v2-simplified',
-        studentInfo: {
-          name: user.name,
-          school: student.school || '미지정',
-          date: attempt.submittedAt ? new Date(attempt.submittedAt).toLocaleDateString('ko-KR') : new Date().toLocaleDateString('ko-KR'),
-          level: student.grade || '미지정',
-        },
-        scoreSummary: {
-          grade: attempt.grade,
-          rawScore: attempt.score,
-          rawScoreMax: attempt.maxScore,
-          standardScore: Math.round(standardScore),
-          percentile: percentile,
-        },
-        charts: {
-          radarChartData: {
-            student: domainStats.map(d => d.percentage),
-            average: domainStats.map(() => 65),
-          },
-          predictionChartData: [
-            Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100),
-            Math.min(Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100) + 5, 100),
-            Math.min(Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100) + 10, 100),
-            Math.min(Math.round((attempt.score || 0) / (attempt.maxScore || 100) * 100) + 15, 100),
-          ],
-        },
-        analysis: {
-          olgaSummary: aiContent.olgaSummary || `${user.name} 학생의 성적 분석 결과입니다.`,
-          subjectDetails,
-          strengths,
-          weaknesses,
-          propensity: {
-            typeTitle: aiContent.propensity?.title || '분석 완료',
-            typeDescription: aiContent.propensity?.description || `${user.name} 학생은 ${attempt.grade}등급 수준의 실력을 갖추고 있습니다.`,
-          },
-        },
-      };
-
-      // Extract legacy format fields for database
-      const summary = reportData.analysis.olgaSummary;
-      const weakAreas = weaknesses.map((w: any) => w.name);
-      const recommendations = strengths.map((s: any) => s.analysisText);
-      const expectedGrade = attempt.grade;
-
-      // Generate full 5-page A4 HTML report using GitHub template
-      const htmlContent = generateReportHTML(reportData);
-      console.log('[AI Report] HTML generated, length:', htmlContent.length);
-
-      // Save report to database
-      console.log('[AI Report] Saving to database...');
-      console.log('[AI Report] Data:', { attemptId, studentId: student.id, examId: exam.id, expectedGrade });
-      
-      try {
-        const [report] = await db.insert(aiReports).values({
-          attemptId,
-          studentId: student.id,
-          examId: exam.id,
-          analysis: reportData,
-          weakAreas,
-          recommendations,
-          expectedGrade: typeof expectedGrade === 'number' ? expectedGrade : attempt.grade,
-          summary,
-          htmlContent,
-        }).returning();
-
-        console.log('[AI Report] Database insert SUCCESS, report ID:', report.id);
-        console.log('[AI Report] Generated successfully for:', user.name);
-        res.json(report);
-      } catch (dbError: any) {
-        console.error('[AI Report] Database insert FAILED:', dbError?.message || dbError);
-        console.error('[AI Report] Full error:', JSON.stringify(dbError, null, 2));
-        throw dbError;
-      }
+      res.json(report);
     } catch (error: any) {
-      console.error("Generate report error:", error);
+      console.error("[Report 4-Step] Generation error:", error);
       
       // Handle rate limit error (429)
       if (error?.status === 429 || error?.statusText === 'Too Many Requests') {
         res.status(429).json({ message: "AI 요청이 너무 많습니다. 1분 후에 다시 시도해주세요." });
       } else if (error?.message?.includes('API key')) {
-        res.status(500).json({ message: "Gemini API 키가 설정되지 않았습니다. 관리자에게 문의하세요." });
+        res.status(500).json({ message: "AI API 키 설정 오류입니다. 관리자에게 문의하세요." });
       } else {
         res.status(500).json({ message: "AI 리포트 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요." });
       }
